@@ -201,7 +201,7 @@ final class CapsuleBuiltInPlugin: InternalPlugin, CapsuleModule {
 enum CapsuleModuleAvailability {
     static var enabled: [CapsuleModuleID] {
         CapsuleModuleID.allCases.filter {
-            PluginRegistry.shared.isEnabled($0.pluginKey)
+            PluginRegistry.shared.allowsHostModuleAction(.open, for: $0.pluginKey)
         }
     }
 }

@@ -11,6 +11,12 @@ enum MailboxModuleID: String, CaseIterable, Codable {
         switch self { case .terminal: return "terminal"; case .chat: return "bubble.left"; case .inbox: return "tray" }
     }
     var pluginKey: PluginKey { PluginKey(domain: .builtIn, rawID: "builtin.mailbox.\(rawValue)") }
+    var filters: [MailboxInboxFilter] {
+        guard let package = try? PresetBufferPluginInstallationStore.shared.package(id: pluginKey.rawID, requireEnabled: false),
+              let filters = package.contribution.options?["filters"] else { return [] }
+        let names: [String: MailboxInboxFilter] = ["all": .all, "unread": .unread, "attention": .attention, "archived": .archived]
+        return filters.components(separatedBy: ",").compactMap { names[$0] }
+    }
 }
 
 protocol MailboxModule: HostModuleContribution {

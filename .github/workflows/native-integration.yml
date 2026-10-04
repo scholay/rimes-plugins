@@ -1,0 +1,105 @@
+# Copyright 2026 scholay
+# SPDX-License-Identifier: Apache-2.0
+name: Native host integration
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: native-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  native:
+    name: Native ${{ matrix.platform }}
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - {platform: macos, runner: macos-15}
+          - {platform: ios, runner: macos-26}
+          - {platform: android, runner: ubuntu-24.04}
+          - {platform: windows-x64, runner: windows-2022, architecture: x64}
+          - {platform: windows-x86, runner: windows-2022, architecture: x86}
+    runs-on: ${{ matrix.runner }}
+    defaults:
+      run:
+        working-directory: host
+    steps:
+      - name: Check out compatible host
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          repository: scholay/rimes
+          ref: e02d4b7d515c810feb185a062b0e2a87da991db2
+          path: host
+          persist-credentials: false
+
+      - name: Check out candidate plugin source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          path: host/OfficialPlugins
+          persist-credentials: false
+
+      - name: Import candidate into the isolated host checkout
+        shell: bash
+        run: python3 scripts/prepare-official-plugins.py --update-lock
+
+      - name: Select macOS Xcode
+        if: matrix.platform == 'macos'
+        uses: maxim-lobanov/setup-xcode@ed7a3b1fda3918c0306d1b724322adc0b8cc0a90
+        with:
+          xcode-version: latest-stable
+
+      - name: Build and exercise macOS adapters
+        if: matrix.platform == 'macos'
+        run: |
+          swift build
+          swift test --package-path Shared
+          export RIMEBUFFER_USER_DIR="$RUNNER_TEMP/plugin-smoke/profile"
+          export RIMEBUFFER_LOCAL_DATA_ROOT="$RUNNER_TEMP/plugin-smoke/local"
+          export RIMEBUFFER_PLUGIN_ROOT="$RUNNER_TEMP/plugin-smoke/plugins"
+          BIN="$(swift build --show-bin-path)/RimeBuffer"
+          for smoke in plugin-platform-smoke plugin-distribution-smoke capsule-module-smoke mailbox-workspace-smoke buffer-music-panel-smoke native-chord-smoke; do
+            "$BIN" "$smoke"
+          done
+
+      - name: Build iOS device and simulator adapters, then run hosted tests
+        if: matrix.platform == 'ios'
+        env:
+          DEVELOPER_DIR: /Applications/Xcode_26.6.app/Contents/Developer
+        run: |
+          platforms/ios/scripts/build.sh
+          platforms/ios/scripts/test-simulator.sh
+
+      - name: Set up Android Java
+        if: matrix.platform == 'android'
+        uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - name: Build and test Android adapters
+        if: matrix.platform == 'android'
+        run: |
+          sdkmanager_path="${ANDROID_HOME:?}/cmdline-tools/latest/bin/sdkmanager"
+          "$sdkmanager_path" 'platforms;android-37.2' 'build-tools;36.0.0' 'ndk;29.0.14206865' 'cmake;3.22.1'
+          python3 platforms/android/scripts/build-engine.py
+          python3 platforms/android/scripts/test-linux-native.py
+          bash platforms/android/gradlew -p platforms/android --no-daemon :core:test :app:assembleDebug :app:assembleDebugAndroidTest :app:lintDebug
+
+      - name: Build and test Windows adapters
+        if: startsWith(matrix.platform, 'windows-')
+        shell: pwsh
+        run: |
+          python scripts/prepare-official-plugins.py
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python -m unittest discover -s platforms/windows/tests -p test_native_data.py
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          ./platforms/windows/tests/Smoke-RimesWindowsFoundation.ps1 -Architecture '${{ matrix.architecture }}' -Configuration Release -RunBuild

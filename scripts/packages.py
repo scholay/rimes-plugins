@@ -57,7 +57,6 @@ def validate(manifest: dict) -> None:
     require(isinstance(manifest.get("id"), str) and IDENTIFIER.fullmatch(manifest["id"]) is not None, "invalid plugin ID")
     version(manifest.get("version"))
     version(manifest.get("minimumHostVersion"))
-    require(manifest.get("kind") == "buffer", "unsupported plugin kind")
     for key in ("nameZH", "nameEN", "summaryZH", "summaryEN", "notice"):
         require(text(manifest.get(key)), f"invalid {key}")
     require(manifest.get("license") == "Apache-2.0", "missing package license")
@@ -66,13 +65,37 @@ def validate(manifest: dict) -> None:
     for platform, entry in platforms.items():
         require(isinstance(entry, dict) and entry.get("distribution") in ("bundled", "download"), f"invalid distribution: {platform}")
         require(text(entry.get("legacyID"), 128), f"missing legacy identity: {platform}")
-    require(manifest.get("capabilities") == ["buffer.read", "ai.generate"], "unsupported capabilities")
     contribution = manifest.get("contribution")
-    require(isinstance(contribution, dict) and set(contribution) == {"type", "instructions"}, "invalid contribution")
-    require(contribution["type"] == "ai.prompt.v1", "unsupported contribution type")
-    instructions = contribution["instructions"]
-    require(isinstance(instructions, dict) and "default" in instructions and set(instructions) <= {"default", "image"}, "invalid prompt modes")
-    require(all(text(v, 32768) for v in instructions.values()), "invalid prompt contents")
+    require(isinstance(contribution, dict), "invalid contribution")
+    kind, capabilities, keys, option_keys = {
+        "ai.prompt.v1": ("buffer", ["buffer.read", "ai.generate"], {"type", "instructions"}, set()),
+        "ai.channel.v1": ("buffer", ["buffer.read", "ai.generate"], {"type", "options"}, {"channel"}),
+        "translation.v1": ("buffer", ["buffer.read", "translation.generate"], {"type", "options", "instructions"}, {"source", "target"}),
+        "stream.pinyin.v1": ("buffer", ["buffer.read", "ai.generate"], {"type", "options"}, {"maxCandidates"}),
+        "reference.search.v1": ("buffer", ["buffer.read", "ai.generate", "reference.search"], {"type", "options"}, {"citationStyle"}),
+        "music.keyboard.v1": ("buffer", ["audio.play"], {"type", "options"}, {"layout", "tracks"}),
+        "morse.v1": ("buffer", ["buffer.write", "audio.play"], {"type", "options"}, {"alphabet", "key"}),
+        "host.module.v1": (manifest.get("kind"), [str(manifest.get("kind")) + ".navigate"], {"type", "options"}, {"host", "module", "filters", "actions"}),
+        "metrics.v1": ("extension", ["metrics.aggregate"], {"type", "options"}, {"events", "storage"}),
+        "typing.practice.v1": ("extension", ["metrics.aggregate"], {"type", "options"}, {"source", "storage"}),
+        "input.chord.v1": ("extension", ["input.chord"], {"type", "options"}, {"schema", "keymap"}),
+    }.get(contribution.get("type"), (None, None, None, None))
+    require(kind is not None and manifest.get("kind") == kind, "unsupported plugin kind or interpreter")
+    require(manifest.get("capabilities") == capabilities, "unsupported capabilities")
+    require(set(contribution) == keys, "invalid contribution")
+    if "instructions" in contribution:
+        instructions = contribution["instructions"]
+        require(isinstance(instructions, dict) and "default" in instructions and set(instructions) <= {"default", "image"}, "invalid prompt modes")
+        require(all(text(v, 32768) for v in instructions.values()), "invalid prompt contents")
+    if "options" in contribution:
+        options = contribution["options"]
+        require(isinstance(options, dict) and set(options) == option_keys and all(text(v, 256) for v in options.values()), "invalid interpreter options")
+        if contribution["type"] == "host.module.v1":
+            require(kind in {"capsule", "mailbox"} and options["host"] == kind, "invalid host module")
+            modules = {"capsule": {"temporary", "capture", "notes", "resources", "passwords"}, "mailbox": {"terminal", "chat", "inbox"}}
+            require(options["module"] in modules[kind], "unknown host module")
+            require(set(options["actions"].split(",")) <= {"open", "search"}, "unknown host action")
+            require(set(options["filters"].split(",")) <= {"all", "text", "image", "video", "bullet", "richText", "reference", "document", "project", "skills", "login", "key", "other", "unread", "attention", "archived"}, "unknown host filter")
     require(len(canonical(manifest)) <= MAX_PACKAGE_BYTES, "package too large")
 
 

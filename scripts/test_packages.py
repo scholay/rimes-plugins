@@ -39,6 +39,15 @@ class PackageTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 packages.validate(item)
 
+    def test_platform_inventory_preserves_mobile_plugins(self):
+        items = packages.manifests(packages.ROOT)
+        self.assertEqual(len([p for p in items if "macos" in p["platforms"]]), 21)
+        self.assertEqual(len([p for p in items if p.get("platforms", {}).get("macos", {}).get("distribution") == "download"]), 8)
+        for platform in ("ios", "android"):
+            self.assertTrue({"builtin.ask", "builtin.poem", "builtin.art", "builtin.polisher"} <= {p["id"] for p in items if platform in p["platforms"]})
+        chord = next(p for p in items if p["id"] == "builtin.fly-chord-learning")
+        self.assertEqual(set(chord["platforms"]), packages.PLATFORMS)
+
     def test_reject_unsafe_source_paths_and_symlinks(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
@@ -83,7 +92,7 @@ class PackageTests(unittest.TestCase):
             source_map["files"].append(source_map["files"][0])
             (root / "source-map.json").write_text(json.dumps(source_map))
             with self.assertRaisesRegex(ValueError, "duplicate host destination"):
-                packages.native_sources(root, {"builtin.polisher", "builtin.latex"})
+                packages.native_sources(root, {p["id"] for p in packages.manifests(root)})
 
 
 if __name__ == "__main__":

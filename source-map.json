@@ -6,11 +6,437 @@
   },
   "files": [
     {
+      "source": "native/shared/AIPoem.swift",
+      "destination": "Shared/Sources/RimesCore/AIPoem.swift",
+      "plugins": [
+        "builtin.poem"
+      ]
+    },
+    {
+      "source": "native/shared/Chord.swift",
+      "destination": "Shared/Sources/RimesCore/Chord.swift",
+      "plugins": [
+        "builtin.fly-chord-learning"
+      ]
+    },
+    {
+      "source": "native/shared/ChordEncoding.swift",
+      "destination": "Shared/Sources/RimesCore/ChordEncoding.swift",
+      "plugins": [
+        "builtin.fly-chord-learning"
+      ]
+    },
+    {
+      "source": "native/shared/TextArt.swift",
+      "destination": "Shared/Sources/RimesCore/TextArt.swift",
+      "plugins": [
+        "builtin.art"
+      ]
+    },
+    {
+      "source": "native/macos/AppleTranslationPlugin.swift",
+      "destination": "Sources/RimeBuffer/AppleTranslationPlugin.swift",
+      "plugins": [
+        "builtin.apple-translation"
+      ]
+    },
+    {
+      "source": "native/macos/BufferMusicAudio.swift",
+      "destination": "Sources/RimeBuffer/BufferMusicAudio.swift",
+      "plugins": [
+        "builtin.music"
+      ]
+    },
+    {
+      "source": "native/macos/BufferMusicPlugin.swift",
+      "destination": "Sources/RimeBuffer/BufferMusicPlugin.swift",
+      "plugins": [
+        "builtin.music"
+      ]
+    },
+    {
+      "source": "native/macos/BufferMusicRhythm.swift",
+      "destination": "Sources/RimeBuffer/BufferMusicRhythm.swift",
+      "plugins": [
+        "builtin.music"
+      ]
+    },
+    {
+      "source": "native/macos/BufferMusicSession.swift",
+      "destination": "Sources/RimeBuffer/BufferMusicSession.swift",
+      "plugins": [
+        "builtin.music"
+      ]
+    },
+    {
+      "source": "native/macos/BufferMusicTheory.swift",
+      "destination": "Sources/RimeBuffer/BufferMusicTheory.swift",
+      "plugins": [
+        "builtin.music"
+      ]
+    },
+    {
+      "source": "native/macos/BufferMusicView.swift",
+      "destination": "Sources/RimeBuffer/BufferMusicView.swift",
+      "plugins": [
+        "builtin.music"
+      ]
+    },
+    {
+      "source": "native/macos/BuiltInPlugins.swift",
+      "destination": "Sources/RimeBuffer/BuiltInPlugins.swift",
+      "plugins": [
+        "builtin.apple-translation",
+        "builtin.capsule.capture",
+        "builtin.capsule.notes",
+        "builtin.capsule.passwords",
+        "builtin.capsule.resources",
+        "builtin.capsule.temporary",
+        "builtin.claude-code-cli",
+        "builtin.codex-cli",
+        "builtin.fly-chord-learning",
+        "builtin.latex",
+        "builtin.mailbox.chat",
+        "builtin.mailbox.inbox",
+        "builtin.mailbox.terminal",
+        "builtin.morse",
+        "builtin.music",
+        "builtin.openai-compatible",
+        "builtin.polisher",
+        "builtin.scholay",
+        "builtin.statistics",
+        "builtin.stream-input",
+        "builtin.typing-speed"
+      ]
+    },
+    {
+      "source": "native/macos/CapsuleModules.swift",
+      "destination": "Sources/RimeBuffer/CapsuleModules.swift",
+      "plugins": [
+        "builtin.capsule.capture",
+        "builtin.capsule.notes",
+        "builtin.capsule.passwords",
+        "builtin.capsule.resources",
+        "builtin.capsule.temporary"
+      ]
+    },
+    {
+      "source": "native/macos/ChordController.swift",
+      "destination": "Sources/RimeBuffer/ChordController.swift",
+      "plugins": [
+        "builtin.fly-chord-learning"
+      ]
+    },
+    {
+      "source": "native/macos/ChordExtension.swift",
+      "destination": "Sources/RimeBuffer/ChordExtension.swift",
+      "plugins": [
+        "builtin.fly-chord-learning"
+      ]
+    },
+    {
+      "source": "native/macos/ChordKeymap.swift",
+      "destination": "Sources/RimeBuffer/ChordKeymap.swift",
+      "plugins": [
+        "builtin.fly-chord-learning"
+      ]
+    },
+    {
+      "source": "native/macos/ChordKeymapActivation.swift",
+      "destination": "Sources/RimeBuffer/ChordKeymapActivation.swift",
+      "plugins": [
+        "builtin.fly-chord-learning"
+      ]
+    },
+    {
+      "source": "native/macos/ChordKeymapEditorViewController.swift",
+      "destination": "Sources/RimeBuffer/ChordKeymapEditorViewController.swift",
+      "plugins": [
+        "builtin.fly-chord-learning"
+      ]
+    },
+    {
+      "source": "native/macos/ChordOutputEncoding.swift",
+      "destination": "Sources/RimeBuffer/ChordOutputEncoding.swift",
+      "plugins": [
+        "builtin.fly-chord-learning"
+      ]
+    },
+    {
+      "source": "native/macos/DailyInputMetrics.swift",
+      "destination": "Sources/RimeBuffer/DailyInputMetrics.swift",
+      "plugins": [
+        "builtin.statistics"
+      ]
+    },
+    {
+      "source": "native/macos/FlyChordLearning.swift",
+      "destination": "Sources/RimeBuffer/FlyChordLearning.swift",
+      "plugins": [
+        "builtin.fly-chord-learning"
+      ]
+    },
+    {
+      "source": "native/macos/FlyChordLearningSettingsViewController.swift",
+      "destination": "Sources/RimeBuffer/FlyChordLearningSettingsViewController.swift",
+      "plugins": [
+        "builtin.fly-chord-learning"
+      ]
+    },
+    {
+      "source": "native/macos/KeyFrequencyStore.swift",
+      "destination": "Sources/RimeBuffer/KeyFrequencyStore.swift",
+      "plugins": [
+        "builtin.statistics"
+      ]
+    },
+    {
+      "source": "native/macos/KeyboardHeatmapView.swift",
+      "destination": "Sources/RimeBuffer/KeyboardHeatmapView.swift",
+      "plugins": [
+        "builtin.statistics"
+      ]
+    },
+    {
+      "source": "native/macos/Mailbox/MailboxModules.swift",
+      "destination": "Sources/RimeBuffer/Mailbox/MailboxModules.swift",
+      "plugins": [
+        "builtin.mailbox.chat",
+        "builtin.mailbox.inbox",
+        "builtin.mailbox.terminal"
+      ]
+    },
+    {
+      "source": "native/macos/MorseCode.swift",
+      "destination": "Sources/RimeBuffer/MorseCode.swift",
+      "plugins": [
+        "builtin.morse"
+      ]
+    },
+    {
+      "source": "native/macos/MorseInputBarView.swift",
+      "destination": "Sources/RimeBuffer/MorseInputBarView.swift",
+      "plugins": [
+        "builtin.morse"
+      ]
+    },
+    {
+      "source": "native/macos/MorseSidetone.swift",
+      "destination": "Sources/RimeBuffer/MorseSidetone.swift",
+      "plugins": [
+        "builtin.morse"
+      ]
+    },
+    {
+      "source": "native/macos/MorseWorkspace.swift",
+      "destination": "Sources/RimeBuffer/MorseWorkspace.swift",
+      "plugins": [
+        "builtin.morse"
+      ]
+    },
+    {
+      "source": "native/macos/NativeChordScheme.swift",
+      "destination": "Sources/RimeBuffer/NativeChordScheme.swift",
+      "plugins": [
+        "builtin.fly-chord-learning"
+      ]
+    },
+    {
+      "source": "native/macos/OfficialAIWorkspace.swift",
+      "destination": "Sources/RimeBuffer/OfficialAIWorkspace.swift",
+      "plugins": [
+        "builtin.codex-cli",
+        "builtin.claude-code-cli",
+        "builtin.openai-compatible"
+      ]
+    },
+    {
       "source": "native/macos/ScholayAcademicPlugins.swift",
       "destination": "Sources/RimeBuffer/ScholayAcademicPlugins.swift",
       "plugins": [
         "builtin.polisher",
         "builtin.latex"
+      ]
+    },
+    {
+      "source": "native/macos/ScholayPlugin.swift",
+      "destination": "Sources/RimeBuffer/ScholayPlugin.swift",
+      "plugins": [
+        "builtin.scholay"
+      ]
+    },
+    {
+      "source": "native/macos/StatisticsSettingsViewController.swift",
+      "destination": "Sources/RimeBuffer/StatisticsSettingsViewController.swift",
+      "plugins": [
+        "builtin.statistics"
+      ]
+    },
+    {
+      "source": "native/macos/StreamInputInferenceEngine.swift",
+      "destination": "Sources/RimeBuffer/StreamInputInferenceEngine.swift",
+      "plugins": [
+        "builtin.stream-input"
+      ]
+    },
+    {
+      "source": "native/macos/StreamInputPinyinHints.swift",
+      "destination": "Sources/RimeBuffer/StreamInputPinyinHints.swift",
+      "plugins": [
+        "builtin.stream-input"
+      ]
+    },
+    {
+      "source": "native/macos/StreamInputPlugin.swift",
+      "destination": "Sources/RimeBuffer/StreamInputPlugin.swift",
+      "plugins": [
+        "builtin.stream-input"
+      ]
+    },
+    {
+      "source": "native/macos/Translation/AppleTranslationSessionBridge.swift",
+      "destination": "Sources/RimeBuffer/Translation/AppleTranslationSessionBridge.swift",
+      "plugins": [
+        "builtin.apple-translation"
+      ]
+    },
+    {
+      "source": "native/macos/TypingSpeedSettingsViewController.swift",
+      "destination": "Sources/RimeBuffer/TypingSpeedSettingsViewController.swift",
+      "plugins": [
+        "builtin.typing-speed"
+      ]
+    },
+    {
+      "source": "native/macos/TypingSpeedStore.swift",
+      "destination": "Sources/RimeBuffer/TypingSpeedStore.swift",
+      "plugins": [
+        "builtin.statistics"
+      ]
+    },
+    {
+      "source": "native/macos/TypingTestArticles.swift",
+      "destination": "Sources/RimeBuffer/TypingTestArticles.swift",
+      "plugins": [
+        "builtin.typing-speed"
+      ]
+    },
+    {
+      "source": "native/macos/TypingTestHistoryStore.swift",
+      "destination": "Sources/RimeBuffer/TypingTestHistoryStore.swift",
+      "plugins": [
+        "builtin.typing-speed"
+      ]
+    },
+    {
+      "source": "native/macos/TypingTestSession.swift",
+      "destination": "Sources/RimeBuffer/TypingTestSession.swift",
+      "plugins": [
+        "builtin.typing-speed"
+      ]
+    },
+    {
+      "source": "native/macos/TypingTestTextView.swift",
+      "destination": "Sources/RimeBuffer/TypingTestTextView.swift",
+      "plugins": [
+        "builtin.typing-speed"
+      ]
+    },
+    {
+      "source": "native/macos/YearHistoryHeatmapView.swift",
+      "destination": "Sources/RimeBuffer/YearHistoryHeatmapView.swift",
+      "plugins": [
+        "builtin.statistics"
+      ]
+    },
+    {
+      "source": "native/android/BufferPluginExecutor.java",
+      "destination": "platforms/android/app/src/main/java/org/scholay/rimes/android/BufferPluginExecutor.java",
+      "plugins": [
+        "builtin.apple-translation",
+        "builtin.ask",
+        "builtin.polisher",
+        "builtin.poem",
+        "builtin.art"
+      ]
+    },
+    {
+      "source": "native/android/BufferPluginPanel.java",
+      "destination": "platforms/android/app/src/main/java/org/scholay/rimes/android/BufferPluginPanel.java",
+      "plugins": [
+        "builtin.apple-translation",
+        "builtin.ask",
+        "builtin.polisher",
+        "builtin.poem",
+        "builtin.art"
+      ]
+    },
+    {
+      "source": "native/android/ChordPreview.java",
+      "destination": "platforms/android/app/src/main/java/org/scholay/rimes/android/ChordPreview.java",
+      "plugins": [
+        "builtin.fly-chord-learning"
+      ]
+    },
+    {
+      "source": "native/android/ChordSurface.java",
+      "destination": "platforms/android/app/src/main/java/org/scholay/rimes/android/ChordSurface.java",
+      "plugins": [
+        "builtin.fly-chord-learning"
+      ]
+    },
+    {
+      "source": "native/android/OfflineDictionary.java",
+      "destination": "platforms/android/app/src/main/java/org/scholay/rimes/android/OfflineDictionary.java",
+      "plugins": [
+        "builtin.apple-translation",
+        "builtin.ask",
+        "builtin.polisher",
+        "builtin.poem",
+        "builtin.art"
+      ]
+    },
+    {
+      "source": "native/android/OpenAiChatCodec.java",
+      "destination": "platforms/android/app/src/main/java/org/scholay/rimes/android/OpenAiChatCodec.java",
+      "plugins": [
+        "builtin.apple-translation",
+        "builtin.ask",
+        "builtin.polisher",
+        "builtin.poem",
+        "builtin.art"
+      ]
+    },
+    {
+      "source": "native/ios/Support/BufferPlugins.swift",
+      "destination": "platforms/ios/Support/BufferPlugins.swift",
+      "plugins": [
+        "builtin.apple-translation",
+        "builtin.ask",
+        "builtin.polisher",
+        "builtin.poem",
+        "builtin.art"
+      ]
+    },
+    {
+      "source": "native/macos/Resources/Music/AVL-README.txt",
+      "destination": "Sources/RimeBuffer/Resources/Music/AVL-README.txt",
+      "plugins": [
+        "builtin.music"
+      ]
+    },
+    {
+      "source": "native/macos/Resources/Music/Black_Pearl_4_LV2.sf2",
+      "destination": "Sources/RimeBuffer/Resources/Music/Black_Pearl_4_LV2.sf2",
+      "plugins": [
+        "builtin.music"
+      ]
+    },
+    {
+      "source": "native/macos/Resources/Music/provenance.json",
+      "destination": "Sources/RimeBuffer/Resources/Music/provenance.json",
+      "plugins": [
+        "builtin.music"
       ]
     }
   ]

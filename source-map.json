@@ -438,6 +438,34 @@
       "plugins": [
         "builtin.music"
       ]
+    },
+    {
+      "source": "native/android-core/ChordGesture.java",
+      "destination": "platforms/android/core/src/main/java/org/scholay/rimes/core/ChordGesture.java",
+      "plugins": [
+        "builtin.fly-chord-learning"
+      ]
+    },
+    {
+      "source": "native/android-core/ChordProfile.java",
+      "destination": "platforms/android/core/src/main/java/org/scholay/rimes/core/ChordProfile.java",
+      "plugins": [
+        "builtin.fly-chord-learning"
+      ]
+    },
+    {
+      "source": "native/android-core/ChordData.java",
+      "destination": "platforms/android/core/src/main/java/org/scholay/rimes/core/ChordData.java",
+      "plugins": [
+        "builtin.fly-chord-learning"
+      ]
+    },
+    {
+      "source": "native/android-core/ChordLayout.java",
+      "destination": "platforms/android/core/src/main/java/org/scholay/rimes/core/ChordLayout.java",
+      "plugins": [
+        "builtin.fly-chord-learning"
+      ]
     }
   ]
 }

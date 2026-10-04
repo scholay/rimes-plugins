@@ -63,7 +63,12 @@ final class OpenAiChatCodec {
         } catch(JSONException error) { throw new Failure(Code.INVALID_REQUEST,"AI 请求格式无效，原文已保留。"); }
     }
     static byte[] makeRemoteRequest(String pluginID,String source,String model,String direction) throws Failure {
+        return makeRemoteRequest(pluginID,source,model,direction,null);
+    }
+    static byte[] makeRemoteRequest(String pluginID,String source,String model,String direction,String packageInstruction) throws Failure {
         validateSource(source);
+        if(packageInstruction!=null && (packageInstruction.trim().isEmpty() || packageInstruction.getBytes(StandardCharsets.UTF_8).length>32768)) throw invalidRequest();
+        if(packageInstruction!=null) validateUnicode(packageInstruction);
         if(!CometAiSettings.validModel(model)) throw invalidRequest();
         String prompt;
         if("translate".equals(pluginID)) {
@@ -73,7 +78,8 @@ final class OpenAiChatCodec {
                     && source.codePoints().anyMatch(c -> Character.UnicodeScript.of(c)==Character.UnicodeScript.HAN);
             prompt="Translate the supplied text into "+(english?"English":"Simplified Chinese")
                     +". Preserve meaning and tone. Return only the translation, without commentary.";
-        } else prompt=instruction(pluginID);
+            if(packageInstruction!=null) prompt=packageInstruction.replace("{targetLanguage}",english?"English":"Simplified Chinese");
+        } else prompt=packageInstruction==null?instruction(pluginID):packageInstruction;
         try {
             JSONObject request=new JSONObject().put("model",model).put("stream",true).put("max_tokens",2048)
                     .put("messages",new JSONArray().put(new JSONObject().put("role","system").put("content",prompt))

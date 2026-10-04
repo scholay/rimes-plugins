@@ -17,6 +17,7 @@ final class BufferPluginExecutor implements AutoCloseable {
             new LinkedBlockingQueue<>(),task -> { Thread thread=new Thread(task,"RIMES-plugins"); thread.setDaemon(true); return thread; });
     private final OfflineDictionary dictionary;
     private final CometAiSettings aiSettings;
+    private final OfficialPluginStore packages;
     private Job current;
     private boolean closed;
 
@@ -24,6 +25,7 @@ final class BufferPluginExecutor implements AutoCloseable {
         if(context==null) throw new IllegalArgumentException("Plugin context is required");
         dictionary=new OfflineDictionary(context.getApplicationContext());
         aiSettings=new CometAiSettings(context.getApplicationContext());
+        packages=new OfficialPluginStore(context);
     }
     synchronized Job run(String pluginID,String source,String direction,Listener listener) {
         return run(pluginID,source,direction,CometAiSettings.disabled(),listener);
@@ -64,8 +66,12 @@ final class BufferPluginExecutor implements AutoCloseable {
     private void execute(Job job,String pluginID,String source,String direction,CometAiSettings.Snapshot profile) {
         try {
             job.cancellation.check(); OpenAiChatCodec.validateSource(source);
+            if(!packages.enabled(pluginID)) throw new IOException("请先在官方插件中安装并启用");
             if(profile.remote(pluginID)) {
-                byte[] request=OpenAiChatCodec.makeRemoteRequest(pluginID,source,profile.model,direction);
+                String instruction;
+                try { instruction=packages.instruction(pluginID); }
+                catch(Exception error) { throw new IOException("插件内容不可用",error); }
+                byte[] request=OpenAiChatCodec.makeRemoteRequest(pluginID,source,profile.model,direction,instruction);
                 String key=aiSettings.credential(profile);
                 job.cancellation.check();
                 OpenAiChatCodec.Decoder decoder=new OpenAiChatCodec.Decoder(job.cancellation,job::update);
@@ -90,7 +96,7 @@ final class BufferPluginExecutor implements AutoCloseable {
             }
         } catch(PluginCancellation.Cancelled ignored) { /* Cancellation has no user-visible failure. */ }
         catch(OpenAiChatCodec.Failure error) { job.fail(error.getMessage()); }
-        catch(IOException error) { job.fail("离线词典无法读取，原文已保留。"); }
+        catch(IOException error) { job.fail("插件内容或离线词典无法读取，原文已保留。"); }
         catch(RuntimeException error) { job.fail("插件未完成，原文已保留。"); }
         finally { job.release(); }
     }

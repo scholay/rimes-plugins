@@ -78,7 +78,7 @@ ascii_composer:
 chord_composer:
   # 定义用于并击的按键字母表
   alphabet: 'qwertyuiopasdfghjklzxcvbnm,.'
-  
+
   # 并击转换规则 - 将并击序列转换为拼音
   algebra:
     # ===== 单个字母直接上屏（无隔音符号） =====
@@ -91,11 +91,11 @@ chord_composer:
     # 重排序规则：提取左半区和右半区的键，然后重新组合
     # 左半区：qwertasdfgzxcvb
     # 右半区：yuiophjklnm,.
-    
+
     # 处理两键组合
     - 'xform/^([qwertasdfgzxcvb])([yuiophjklnm,.])$/$1$2/'
     - 'xform/^([yuiophjklnm,.])([qwertasdfgzxcvb])$/$2$1/'
-    
+
     # 处理三键组合
     - 'xform/^([qwertasdfgzxcvb])([qwertasdfgzxcvb])([yuiophjklnm,.])$/$1$2$3/'
     - 'xform/^([qwertasdfgzxcvb])([yuiophjklnm,.])([qwertasdfgzxcvb])$/$1$3$2/'
@@ -103,17 +103,17 @@ chord_composer:
     - 'xform/^([yuiophjklnm,.])([qwertasdfgzxcvb])([qwertasdfgzxcvb])$/$2$3$1/'
     - 'xform/^([yuiophjklnm,.])([qwertasdfgzxcvb])([yuiophjklnm,.])$/$2$1$3/'
     - 'xform/^([yuiophjklnm,.])([yuiophjklnm,.])([qwertasdfgzxcvb])$/$3$1$2/'
-    
+
     # ===== 通用按键重排序 =====
     # 核心思路：将任意按键组合按键盘顺序重排
     # 键盘顺序：qwertasdfgzxcvbyuiophjklnm,.
-    
+
     # 使用递归替换实现冒泡排序算法
     # 每次将较后面的字符向前移动，直到所有字符按键盘顺序排列
-    
+
     # 第1轮：处理相邻字符交换（冒泡排序的一轮）
     - 'xform/([w])([q])/\2\1/g'      # wq -> qw
-    - 'xform/([e])([qw])/\2\1/g'     # eq/ew -> qe/we  
+    - 'xform/([e])([qw])/\2\1/g'     # eq/ew -> qe/we
     - 'xform/([r])([qwe])/\2\1/g'    # rq/rw/re -> qr/wr/er
     - 'xform/([t])([qwer])/\2\1/g'   # 以此类推...
     - 'xform/([a])([qwert])/\2\1/g'
@@ -139,7 +139,7 @@ chord_composer:
     - 'xform/([m])([qwertasdfgzxcvbyuiophjkln])/\2\1/g'
     - 'xform/([,])([qwertasdfgzxcvbyuiophjklnm])/\2\1/g'
     - 'xform/([.])([qwertasdfgzxcvbyuiophjklnm,])/\2\1/g'
-    
+
     # 第2轮：重复一遍确保完全排序（处理长组合）
     - 'xform/([w])([q])/\2\1/g'
     - 'xform/([e])([qw])/\2\1/g'
@@ -168,7 +168,7 @@ chord_composer:
     - 'xform/([m])([qwertasdfgzxcvbyuiophjkln])/\2\1/g'
     - 'xform/([,])([qwertasdfgzxcvbyuiophjklnm])/\2\1/g'
     - 'xform/([.])([qwertasdfgzxcvbyuiophjklnm,])/\2\1/g'
-    
+
     # 第3轮：最后一遍确保完全排序
     - 'xform/([w])([q])/\2\1/g'
     - 'xform/([e])([qw])/\2\1/g'
@@ -197,11 +197,11 @@ chord_composer:
     - 'xform/([m])([qwertasdfgzxcvbyuiophjkln])/\2\1/g'
     - 'xform/([,])([qwertasdfgzxcvbyuiophjklnm])/\2\1/g'
     - 'xform/([.])([qwertasdfgzxcvbyuiophjklnm,])/\2\1/g'
-    
-    # ===== 完整音节映射优先（避免被基础规则覆盖） =====
-    
 
-  
+    # ===== 完整音节映射优先（避免被基础规则覆盖） =====
+
+
+
 
     # 一、单键声母 + 单键韵母 / 组合韵母
     # q 声母 + 单键韵母
@@ -232,9 +232,9 @@ chord_composer:
     - 'xform/^wm,$/weng/'     # weng - 翁、瓮
     - 'xform/^woj$/w*ei/'     # wei - 为、位、味 (临时标记防止二次映射)
     - 'xform/^wjk$/wa/'       # wa - 哇、哇、哇
-    
+
     # r声母 + 单键韵母
-    - 'xform/^ro$/ruo/'     # ruo - 若、弱 
+    - 'xform/^ro$/ruo/'     # ruo - 若、弱
     - 'xform/^rj$/ran/'      # ran - 然、燃
     - 'xform/^rk$/rao/'      # rao - 饶、扰
     - 'xform/^rh$/rang/'     # rang - 让、嚷
@@ -252,7 +252,7 @@ chord_composer:
 
     # t声母 + 单键韵母
     - 'xform/^ty$/ting/'     # ting - 听、停、庭
-    - 'xform/^to$/tuo/'      # tuo - 拖、脱、托 
+    - 'xform/^to$/tuo/'      # tuo - 拖、脱、托
     - 'xform/^tj$/tan/'      # tan - 谈、弹、坦
     - 'xform/^tk$/tao/'      # tao - 桃、逃、淘
     - 'xform/^tl$/tai/'      # tai - 太、台、
@@ -274,7 +274,7 @@ chord_composer:
     - 'xform/^tkl$/tou/'      # tou - 头、偷、投
 
     # s声母 + 单键韵母
-    - 'xform/^so$/suo/'     # suo - 所、锁、缩 
+    - 'xform/^so$/suo/'     # suo - 所、锁、缩
     - 'xform/^sj$/san/'      # san - 三、散、伞
     - 'xform/^sk$/sao/'      # sao - 扫、嫂、骚
     - 'xform/^sl$/sai/'      # sai - 赛、塞
@@ -306,7 +306,7 @@ chord_composer:
     - 'xform/^di$/di/'       # di - 地、第、低
     - 'xform/^du$/du/'       # du - 度、读、度
     - 'xform/^dp$/dun/'      # dun - 顿、盾、顿
-    
+
     # d声母 + 组合键韵母
     - 'xform/^dij$/de/'       # de - 得、德、德
     - 'xform/^dui$/duan/'     # duan - 段、断、段
@@ -320,7 +320,7 @@ chord_composer:
     - 'xform/^dm,$/deng/'     # deng - 等、登、灯
     - 'xform/^dil$/die/'      # die - 爹、叠、蝶
     - 'xform/^dk\.$/dia/'     # dia - 嗲
-    
+
 
     # f声母 + 单键韵母
     - 'xform/^fj$/fan/'      # fan - 反、饭、翻
@@ -334,7 +334,7 @@ chord_composer:
     - 'xform/^fio$/fen/'      # fen - 分、分、分
     - 'xform/^fm,$/feng/'     # feng - 风、封、封
     - 'xform/^fkl$/fou/'      # fou - 否、否、否
-  
+
       # g声母 + 单键韵母
     - 'xform/^go$/g*uo/'     # guo - 国、过、果 (临时标记防止二次映射)
     - 'xform/^gj$/gan/'      # gan - 干、敢、感
@@ -357,7 +357,7 @@ chord_composer:
     - 'xform/^guo$/guang/'    # guang - 光、广、逛
     - 'xform/^gk\.$/gua/'     # gua - 瓜、挂、刮
     - 'xform/^gm,$/geng/'     # geng - 更、耕、更
-    
+
 
     # z声母 + 单键韵母
     - 'xform/^zo$/zuo/'      # zuo - 做、作、坐
@@ -379,7 +379,7 @@ chord_composer:
     - 'xform/^zkl$/zou/'      # zou - 走、奏、奏
     - 'xform/^zoj$/zei/'      # zei - 贼、贼、贼
     - 'xform/^zm,$/zeng/'     # zeng - 增、增、增
-    
+
 
     # x声母 + 单键韵母
     - 'xform/^xy$/xing/'     # xing - 行、星、性
@@ -408,7 +408,7 @@ chord_composer:
     - 'xform/^ci$/ci/'       # ci - 此、次、词
     - 'xform/^cu$/cu/'       # cu - 粗、粗、粗
     - 'xform/^cp$/cun/'      # cun - 存、存、存
-  
+
     # c声母 + 组合键韵母
     - 'xform/^cij$/ce/'       # ce - 策、策、策
     - 'xform/^cui$/cuan/'     # cuan - 窜、窜、窜
@@ -418,8 +418,8 @@ chord_composer:
     - 'xform/^ckm$/cong/'     # cong - 从、从、从
     - 'xform/^cio$/cen/'      # cen - 参、参、参
     - 'xform/^cm,$/ceng/'     # ceng - 层、层、层
-    
-    # v声母 + 单键韵母（代表zh）   
+
+    # v声母 + 单键韵母（代表zh）
     - 'xform/^vj$/zhan/'     # zhan - 站、战、占
     - 'xform/^vk$/zhao/'     # zhao - 找、照、招
     - 'xform/^vl$/zhai/'     # zhai - 摘、宅、债
@@ -442,7 +442,7 @@ chord_composer:
     - 'xform/^v,\.$/zhui/'    # zhui - 追、坠、锥
     - 'xform/^vkl$/zhou/'     # zhou - 周、州、洲
     - 'xform/^vk\.$/zhua/'    # zhua - 抓、爪
-    
+
     # b声母 + 单键韵母
     - 'xform/^by$/bing/'     # bing - 病、并、冰
     - 'xform/^bj$/ban/'      # ban - 半、办、班
@@ -453,7 +453,7 @@ chord_composer:
     - 'xform/^bh$/bang/'     # bang - 帮、棒、榜
     - 'xform/^bi$/bi/'       # bi - 比、必、笔
     - 'xform/^bu$/bu/'       # bu - 不、布、步
-    
+
     # b声母 + 组合键韵母
     - 'xform/^bjk$/ba/'       # ba - 把、爸、吧
     - 'xform/^bio$/ben/'      # ben - 本、奔、笨
@@ -463,7 +463,7 @@ chord_composer:
     - 'xform/^bil$/bie/'      # bie - 别、憋、鳖
 
 
-    
+
     # 三、组合键声母 + 单键韵母 / 组合韵母
 
     # df组合(y声母) + 单键韵母
@@ -476,7 +476,7 @@ chord_composer:
     - 'xform/^dfu$/yu/'       # yu - 鱼、语、雨
     - 'xform/^dfp$/yun/'      # yun - 云、运、韵
 
-    
+
     # df组合(y声母) + 组合韵母
     - 'xform/^dfij$/ye/'      # ye - 也、也、也
     - 'xform/^dfui$/yuan/'    # yuan - 原、圆、圆
@@ -497,7 +497,7 @@ chord_composer:
     - 'xform/^efp$/shun/'     # shun - 顺、顺、顺
     - 'xform/^efy$/shuai/'    # shuai - 帅
 
-    
+
     # ef组合(sh声母) + 组合键韵母
     - 'xform/^efk\.$/shua/'   # shua - 刷
     - 'xform/^efij$/she/'     # she - 设、社、射
@@ -519,7 +519,7 @@ chord_composer:
     - 'xform/^eru$/chu/'      # chu - 出、初、除
     - 'xform/^ery$/chuai/'    # chuai - 揣、踹
     - 'xform/^erp$/chun/'     # chun - 春、纯、唇
-    
+
     # er组合(ch声母) + 组合韵母
     - 'xform/^erij$/che/'     # che - 车、彻、撤
     - 'xform/^erui$/chuan/'   # chuan - 传、川、船
@@ -530,7 +530,7 @@ chord_composer:
     - 'xform/^er,\.$/chui/'   # chui - 吹、垂
     - 'xform/^erkl$/chou/'    # chou - 抽、愁、丑
     - 'xform/^erjk$/cha/'     # cha - 茶、查、差
-    
+
     # wr组合(p声母) + 单键韵母
     - 'xform/^wry$/ping/'     # ping - 平、评、瓶
     - 'xform/^wrj$/pan/'      # pan - 盘、判、攀
@@ -541,7 +541,7 @@ chord_composer:
     - 'xform/^wrh$/pang/'     # pang - 旁、胖、庞
     - 'xform/^wri$/pi/'       # pi - 皮、批、披
     - 'xform/^wru$/pu/'       # pu - 普、铺、朴
-    - 'xform/^wro$/po/'      # po - 破、婆、坡    
+    - 'xform/^wro$/po/'      # po - 破、婆、坡
     # wr组合(p声母) + 组合韵母
     - 'xform/^wrio$/pen/'     # pen - 盆、喷
     - 'xform/^wrm,$/peng/'    # peng - 朋、碰、蓬
@@ -559,7 +559,7 @@ chord_composer:
     - 'xform/^xci$/he/'       # he - 和、河、合
     - 'xform/^xcy$/huai/'     # huai - 怀、坏、淮
     - 'xform/^xcp$/hun/'      # hun - 混、昏、昏
-    
+
     # xc组合(h声母) + 组合韵母
     - 'xform/^xck\.$/hua/'    # hua - 化、话、华
     - 'xform/^xcij$/he/'      # he - 和、河、合
@@ -572,7 +572,7 @@ chord_composer:
     - 'xform/^xckl$/hou/'     # hou - 后、候、厚
     - 'xform/^xcjk$/ha/'      # ha - 哈、哈、哈
     - 'xform/^xcoj$/hei/'     # hei - 黑、嘿、嘿
-  
+
 
     # cv组合(j声母) + 单键韵母
     - 'xform/^cvy$/jing/'     # jing - 京、精、静
@@ -581,8 +581,8 @@ chord_composer:
     - 'xform/^cvi$/ji/'       # ji - 机、及、基
     - 'xform/^cvp$/jun/'      # jun - 军、君、俊
     - 'xform/^cvu$/ju/'       # ju - 举、局、举
-    
-    
+
+
     # cv组合(j声母) + 组合韵母
     - 'xform/^cvjl$/jiu/'     # jiu - 九、就、久
     - 'xform/^cvui$/juan/'    # juan - 卷、眷
@@ -602,7 +602,7 @@ chord_composer:
     - 'xform/^sfy$/kuai/'     # kuai - 快、筷、怪
     - 'xform/^sfp$/kun/'      # kun - 困、困、困
     - 'xform/^sfo$/kuo/'      # kuo - 阔、括、阔
-    
+
     # sf组合(k声母) + 组合韵母
     - 'xform/^sfk\.$/kua/'    # kua - 夸、垮、跨
     - 'xform/^sfij$/ke/'      # ke - 可、科、课
@@ -629,7 +629,7 @@ chord_composer:
     - 'xform/^sdi$/li/'       # li - 里、里、里
     - 'xform/^sd,\.$/lv/'     # lv - 绿、旅、旅
     - 'xform/^sdp$/lun/'      # lun - 轮、伦、轮
-    
+
     # sd组合(l声母) + 组合韵母
     - 'xform/^sdjl$/liu/'     # liu - 六、流、留
     - 'xform/^sdij$/le/'      # le - 了、乐
@@ -644,7 +644,7 @@ chord_composer:
     - 'xform/^sdkl$/lou/'     # lou - 楼、搂、漏
     - 'xform/^sduo$/liang/'   # liang - 两、两、两
     - 'xform/^sdk\.$/lia/'     # lia - 俩
-    
+
 
     # dv组合(n声母) + 单键韵母
     - 'xform/^dvy$/ning/'     # ning - 宁、拧、凝
@@ -658,7 +658,7 @@ chord_composer:
     - 'xform/^dvi$/ni/'       # ni - 你、你、你
     - 'xform/^dvu$/nu/'       # nu - 努、怒、努
 
-    
+
     # dv组合(n声母) + 组合韵母
     - 'xform/^dvjl$/niu/'     # niu - 牛、纽、扭
     - 'xform/^dvij$/ne/'      # ne - 呢、讷
@@ -698,9 +698,9 @@ chord_composer:
     - 'xform/^welm$/miao/'    # miao - 妙、苗、描
     - 'xform/^wekl$/mou/'     # mou - 某、谋、牟
 
-    
 
-    # 零声母 
+
+    # 零声母
     - 'xform/^eij$/e/'       # e -呃
     - 'xform/^em,$/eng/'     # eng - 嗯
     - 'xform/^ajk$/a/'       # a - 啊、阿、呵
@@ -750,7 +750,7 @@ chord_composer:
     - 'xform/^w\*en$/wen/'    # 还原 w*en -> wen
     - 'xform/^g\*uo$/guo/'    # 还原 g*uo -> guo
     - 'xform/^u\*ang$/uang/'  # 还原 u*ang -> uang
-    
+
 
 
 speller:

@@ -1,0 +1,17 @@
+{
+  "schemaVersion": 1,
+  "upstream": {
+    "repository": "https://github.com/scholay/rimes",
+    "commit": "5daa62b87c008028c42581713aaa85131683697d"
+  },
+  "files": [
+    {
+      "source": "native/macos/ScholayAcademicPlugins.swift",
+      "destination": "Sources/RimeBuffer/ScholayAcademicPlugins.swift",
+      "plugins": [
+        "builtin.polisher",
+        "builtin.latex"
+      ]
+    }
+  ]
+}

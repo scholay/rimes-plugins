@@ -6,7 +6,7 @@
 
 ## AI coding assistants
 
-- [Codex](https://github.com/codex) (OpenAI) — repository initialization, licensing documentation and CI setup.
+- [Codex](https://github.com/codex) (OpenAI) — repository initialization, licensing documentation, plugin packaging, migration and CI.
 
 ## Attribution policy
 

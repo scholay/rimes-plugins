@@ -466,6 +466,22 @@
       "plugins": [
         "builtin.fly-chord-learning"
       ]
+    },
+    {
+      "source": "native/windows/official_features.hpp",
+      "destination": "platforms/windows/native/src/workbench/official_features.hpp",
+      "plugins": [
+        "builtin.openai-compatible",
+        "builtin.apple-translation",
+        "builtin.fly-chord-learning"
+      ]
+    },
+    {
+      "source": "native/windows/my_combo.schema.yaml",
+      "destination": "platforms/windows/native/resources/my_combo.schema.yaml",
+      "plugins": [
+        "builtin.fly-chord-learning"
+      ]
     }
   ]
 }

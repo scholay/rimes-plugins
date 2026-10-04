@@ -16,7 +16,7 @@ final class BufferPluginExecutor implements AutoCloseable {
     private final ThreadPoolExecutor worker=new ThreadPoolExecutor(1,1,0,TimeUnit.MILLISECONDS,
             new LinkedBlockingQueue<>(),task -> { Thread thread=new Thread(task,"RIMES-plugins"); thread.setDaemon(true); return thread; });
     private final OfflineDictionary dictionary;
-    private final CometAiSettings aiSettings;
+    private final OpenAiSettings aiSettings;
     private final OfficialPluginStore packages;
     private Job current;
     private boolean closed;
@@ -24,13 +24,13 @@ final class BufferPluginExecutor implements AutoCloseable {
     BufferPluginExecutor(Context context) {
         if(context==null) throw new IllegalArgumentException("Plugin context is required");
         dictionary=new OfflineDictionary(context.getApplicationContext());
-        aiSettings=new CometAiSettings(context.getApplicationContext());
+        aiSettings=new OpenAiSettings(context.getApplicationContext());
         packages=new OfficialPluginStore(context);
     }
     synchronized Job run(String pluginID,String source,String direction,Listener listener) {
-        return run(pluginID,source,direction,CometAiSettings.disabled(),listener);
+        return run(pluginID,source,direction,OpenAiSettings.disabled(),listener);
     }
-    synchronized Job run(String pluginID,String source,String direction,CometAiSettings.Snapshot profile,Listener listener) {
+    synchronized Job run(String pluginID,String source,String direction,OpenAiSettings.Snapshot profile,Listener listener) {
         if(listener==null) throw new IllegalArgumentException("Plugin listener is required");
         if(closed) throw new IllegalStateException("Plugin executor is closed");
         if(current!=null) current.cancel();
@@ -63,7 +63,7 @@ final class BufferPluginExecutor implements AutoCloseable {
         }
         private synchronized void release() { listener=null; task=null; }
     }
-    private void execute(Job job,String pluginID,String source,String direction,CometAiSettings.Snapshot profile) {
+    private void execute(Job job,String pluginID,String source,String direction,OpenAiSettings.Snapshot profile) {
         try {
             job.cancellation.check(); OpenAiChatCodec.validateSource(source);
             if(!packages.enabled(pluginID)) throw new IOException("请先在官方插件中安装并启用");
@@ -75,7 +75,7 @@ final class BufferPluginExecutor implements AutoCloseable {
                 String key=aiSettings.credential(profile);
                 job.cancellation.check();
                 OpenAiChatCodec.Decoder decoder=new OpenAiChatCodec.Decoder(job.cancellation,job::update);
-                new HttpOpenAiTransport().stream(request,key,job.cancellation,decoder::append);
+                new HttpOpenAiTransport().stream(profile.endpoint(),request,key,job.cancellation,decoder::append);
                 decoder.finish();
             } else if("translate".equals(pluginID)) {
                 if(!"auto".equals(direction) && !"zh-en".equals(direction) && !"en-zh".equals(direction))

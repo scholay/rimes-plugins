@@ -69,7 +69,7 @@ final class OpenAiChatCodec {
         validateSource(source);
         if(packageInstruction!=null && (packageInstruction.trim().isEmpty() || packageInstruction.getBytes(StandardCharsets.UTF_8).length>32768)) throw invalidRequest();
         if(packageInstruction!=null) validateUnicode(packageInstruction);
-        if(!CometAiSettings.validModel(model)) throw invalidRequest();
+        if(!OpenAiSettings.validModel(model)) throw invalidRequest();
         String prompt;
         if("translate".equals(pluginID)) {
             if(!"auto".equals(direction) && !"zh-en".equals(direction) && !"en-zh".equals(direction))

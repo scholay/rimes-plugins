@@ -26,6 +26,8 @@ RIMES 的中文输入能力基于 [Rime 输入法引擎（librime）](https://gi
 
 CI 校验仓库、许可与插件包，并生成带 SHA-256 的候选包、目录和原生源码压缩包。运行方式：
 
+原生集成检查会将候选插件导入固定提交的 RIMES 测试副本，分别构建 macOS、iOS、Android 和 Windows x64/x86，并运行宿主测试。兼容宿主提交记录在 [原生集成工作流](.github/workflows/native-integration.yml)；升级宿主接口时一并更新此固定提交。此流程不使用发布凭据。
+
 ```sh
 python3 scripts/check_repository.py
 python3 -m unittest discover -s scripts -p 'test_*.py' -v

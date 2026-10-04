@@ -37,7 +37,7 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           repository: scholay/rimes
-          ref: b0afe86ee31d184170f380a0b8234b3eeea4b1db
+          ref: 2c1d97af0705508a593ac11f3f4c09febaba9057
           path: host
           persist-credentials: false
 

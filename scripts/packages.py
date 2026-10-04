@@ -155,7 +155,7 @@ def build(root: Path, output: Path, release_version: str) -> dict:
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--output", type=Path, default=ROOT / "dist")
-    parser.add_argument("--version", default="1.1.0")
+    parser.add_argument("--version", default=(ROOT / "VERSION").read_text().strip())
     args = parser.parse_args()
     catalog = build(ROOT, args.output, args.version)
     print(f"Validated and built {len(catalog['plugins'])} packages and their native source bundle.")

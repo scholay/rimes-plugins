@@ -40,6 +40,7 @@ final class ChordSurface extends ViewGroup {
     private KeyboardTheme theme=KeyboardTheme.ALL[0];
     private int themeUiMode=-1;
     private Runnable utilityRetirementListener;
+    private float verticalScale=1;
     ChordSurface(Context context,Handler handler) {
         super(context); this.handler=handler; setLayoutDirection(LAYOUT_DIRECTION_LTR);
         setMotionEventSplittingEnabled(false);
@@ -90,7 +91,8 @@ final class ChordSurface extends ViewGroup {
     boolean isChordActive() { return gesture.active() || ordinary.size()>0; }
     private float density() { return getResources().getDisplayMetrics().density; }
     private ChordLayout.Key keyAt(float x,float y) {
-        float d=density(),px=x/d,py=y/d;
+        if(verticalScale<=0) return null;
+        float d=density(),px=x/d,py=y/(d*verticalScale);
         for(ChordLayout.Key key:frames) if(key.contains(px,py)) return key;
         return null;
     }
@@ -190,12 +192,14 @@ final class ChordSurface extends ViewGroup {
         float logicalWidth=Math.max(1,width/density);
         int height=Math.round(ChordLayout.height(logicalWidth,split)*density);
         setMeasuredDimension(width,resolveSize(height,heightSpec));
+        verticalScale=height<=0?0:Math.min(1,getMeasuredHeight()/(float)height);
         frames=ChordLayout.keys(logicalWidth,split);
         for(int i=0;i<frames.size();i++) {
             ChordLayout.Key key=frames.get(i);
             int w=Math.round((key.x+key.width)*density)-Math.round(key.x*density);
-            int h=Math.round((key.y+key.height)*density)-Math.round(key.y*density);
+            int h=Math.round((key.y+key.height)*verticalScale*density)-Math.round(key.y*verticalScale*density);
             getChildAt(i).measure(MeasureSpec.makeMeasureSpec(w,MeasureSpec.EXACTLY),MeasureSpec.makeMeasureSpec(h,MeasureSpec.EXACTLY));
+            ((KeyButton)getChildAt(i)).capFrame(0,0,w/density,h/density);
         }
     }
     @Override protected void onLayout(boolean changed,int l,int t,int r,int b) {
@@ -203,7 +207,7 @@ final class ChordSurface extends ViewGroup {
         float density=density();
         for(int i=0;i<frames.size();i++) {
             ChordLayout.Key key=frames.get(i); android.view.View child=getChildAt(i);
-            int x=Math.round(key.x*density),y=Math.round(key.y*density);
+            int x=Math.round(key.x*density),y=Math.round(key.y*verticalScale*density);
             child.layout(x,y,x+child.getMeasuredWidth(),y+child.getMeasuredHeight());
         }
     }

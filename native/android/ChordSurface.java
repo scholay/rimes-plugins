@@ -4,6 +4,7 @@ import android.content.Context;
 import android.util.SparseArray;
 import android.view.HapticFeedbackConstants;
 import android.view.MotionEvent;
+import android.view.View;
 import android.view.ViewGroup;
 import java.util.HashSet;
 import java.util.List;
@@ -37,6 +38,8 @@ final class ChordSurface extends ViewGroup {
     private KeyboardTheme visualTheme;
     private int visualUiMode=-1;
     private KeyboardTheme theme=KeyboardTheme.ALL[0];
+    private int themeUiMode=-1;
+    private Runnable utilityRetirementListener;
     ChordSurface(Context context,Handler handler) {
         super(context); this.handler=handler; setLayoutDirection(LAYOUT_DIRECTION_LTR);
         setMotionEventSplittingEnabled(false);
@@ -53,16 +56,31 @@ final class ChordSurface extends ViewGroup {
         }
         updateButtons();
     }
+    /** Semantic host attachment point; letter buttons remain owned by the chord gesture. */
+    KeyButton utilityButton(ChordLayout.Action action) {
+        if(action==null || action==ChordLayout.Action.TEXT) throw new IllegalArgumentException("A utility action is required");
+        for(int i=0;i<frames.size();i++) if(frames.get(i).action==action) return (KeyButton)getChildAt(i);
+        throw new IllegalArgumentException("Utility is not present in this chord layout");
+    }
+    /** A host's held utility action must retire whenever this surface loses touch authority. */
+    void setUtilityRetirementListener(Runnable listener) {
+        if(utilityRetirementListener==listener) return;
+        if(utilityRetirementListener!=null) utilityRetirementListener.run();
+        utilityRetirementListener=listener;
+    }
     void render(boolean split,boolean resolves,boolean shifted,KeyboardTheme theme) {
         boolean geometryChanged=this.split!=split;
-        boolean retire=geometryChanged || this.resolves!=resolves || this.shifted!=shifted;
+        int uiMode=getResources().getConfiguration().uiMode;
+        boolean retire=geometryChanged || this.resolves!=resolves || this.shifted!=shifted || this.theme!=theme || themeUiMode!=uiMode;
         this.split=split; this.resolves=resolves; this.shifted=shifted; this.theme=theme;
+        themeUiMode=uiMode;
         if(retire) cancel();
         if(geometryChanged) requestLayout();
         updateButtons();
     }
     /** Context loss retires pointer identities so delayed releases cannot submit to a new field. */
     void cancel() {
+        if(utilityRetirementListener!=null) utilityRetirementListener.run();
         if(activeStream) retiredDownTime=streamDownTime;
         activeStream=false; streamDownTime=-1;
         gesture.reset(); tracked.clear(); ordinary.clear(); ordinaryRevision++;
@@ -181,6 +199,7 @@ final class ChordSurface extends ViewGroup {
         }
     }
     @Override protected void onLayout(boolean changed,int l,int t,int r,int b) {
+        if(changed) cancel();
         float density=density();
         for(int i=0;i<frames.size();i++) {
             ChordLayout.Key key=frames.get(i); android.view.View child=getChildAt(i);
@@ -192,4 +211,11 @@ final class ChordSurface extends ViewGroup {
         super.onSizeChanged(w,h,oldw,oldh); if(w!=oldw || h!=oldh) cancel();
     }
     @Override protected void onDetachedFromWindow() { cancel(); super.onDetachedFromWindow(); }
+    @Override public void onCancelPendingInputEvents() { super.onCancelPendingInputEvents(); if(gesture!=null) cancel(); }
+    @Override protected void onVisibilityChanged(View changedView,int visibility) {
+        super.onVisibilityChanged(changedView,visibility); if(visibility!=VISIBLE && gesture!=null) cancel();
+    }
+    @Override protected void onWindowVisibilityChanged(int visibility) {
+        super.onWindowVisibilityChanged(visibility); if(visibility!=VISIBLE && gesture!=null) cancel();
+    }
 }

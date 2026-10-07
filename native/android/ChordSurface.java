@@ -4,6 +4,7 @@ import android.content.Context;
 import android.util.SparseArray;
 import android.view.HapticFeedbackConstants;
 import android.view.MotionEvent;
+import android.view.View;
 import android.view.ViewGroup;
 import java.util.HashSet;
 import java.util.List;
@@ -37,6 +38,9 @@ final class ChordSurface extends ViewGroup {
     private KeyboardTheme visualTheme;
     private int visualUiMode=-1;
     private KeyboardTheme theme=KeyboardTheme.ALL[0];
+    private int themeUiMode=-1;
+    private Runnable utilityRetirementListener;
+    private float verticalScale=1;
     ChordSurface(Context context,Handler handler) {
         super(context); this.handler=handler; setLayoutDirection(LAYOUT_DIRECTION_LTR);
         setMotionEventSplittingEnabled(false);
@@ -53,16 +57,31 @@ final class ChordSurface extends ViewGroup {
         }
         updateButtons();
     }
+    /** Semantic host attachment point; letter buttons remain owned by the chord gesture. */
+    KeyButton utilityButton(ChordLayout.Action action) {
+        if(action==null || action==ChordLayout.Action.TEXT) throw new IllegalArgumentException("A utility action is required");
+        for(int i=0;i<frames.size();i++) if(frames.get(i).action==action) return (KeyButton)getChildAt(i);
+        throw new IllegalArgumentException("Utility is not present in this chord layout");
+    }
+    /** A host's held utility action must retire whenever this surface loses touch authority. */
+    void setUtilityRetirementListener(Runnable listener) {
+        if(utilityRetirementListener==listener) return;
+        if(utilityRetirementListener!=null) utilityRetirementListener.run();
+        utilityRetirementListener=listener;
+    }
     void render(boolean split,boolean resolves,boolean shifted,KeyboardTheme theme) {
         boolean geometryChanged=this.split!=split;
-        boolean retire=geometryChanged || this.resolves!=resolves || this.shifted!=shifted;
+        int uiMode=getResources().getConfiguration().uiMode;
+        boolean retire=geometryChanged || this.resolves!=resolves || this.shifted!=shifted || this.theme!=theme || themeUiMode!=uiMode;
         this.split=split; this.resolves=resolves; this.shifted=shifted; this.theme=theme;
+        themeUiMode=uiMode;
         if(retire) cancel();
         if(geometryChanged) requestLayout();
         updateButtons();
     }
     /** Context loss retires pointer identities so delayed releases cannot submit to a new field. */
     void cancel() {
+        if(utilityRetirementListener!=null) utilityRetirementListener.run();
         if(activeStream) retiredDownTime=streamDownTime;
         activeStream=false; streamDownTime=-1;
         gesture.reset(); tracked.clear(); ordinary.clear(); ordinaryRevision++;
@@ -72,7 +91,8 @@ final class ChordSurface extends ViewGroup {
     boolean isChordActive() { return gesture.active() || ordinary.size()>0; }
     private float density() { return getResources().getDisplayMetrics().density; }
     private ChordLayout.Key keyAt(float x,float y) {
-        float d=density(),px=x/d,py=y/d;
+        if(verticalScale<=0) return null;
+        float d=density(),px=x/d,py=y/(d*verticalScale);
         for(ChordLayout.Key key:frames) if(key.contains(px,py)) return key;
         return null;
     }
@@ -172,19 +192,22 @@ final class ChordSurface extends ViewGroup {
         float logicalWidth=Math.max(1,width/density);
         int height=Math.round(ChordLayout.height(logicalWidth,split)*density);
         setMeasuredDimension(width,resolveSize(height,heightSpec));
+        verticalScale=height<=0?0:Math.min(1,getMeasuredHeight()/(float)height);
         frames=ChordLayout.keys(logicalWidth,split);
         for(int i=0;i<frames.size();i++) {
             ChordLayout.Key key=frames.get(i);
             int w=Math.round((key.x+key.width)*density)-Math.round(key.x*density);
-            int h=Math.round((key.y+key.height)*density)-Math.round(key.y*density);
+            int h=Math.round((key.y+key.height)*verticalScale*density)-Math.round(key.y*verticalScale*density);
             getChildAt(i).measure(MeasureSpec.makeMeasureSpec(w,MeasureSpec.EXACTLY),MeasureSpec.makeMeasureSpec(h,MeasureSpec.EXACTLY));
+            ((KeyButton)getChildAt(i)).capFrame(0,0,w/density,h/density);
         }
     }
     @Override protected void onLayout(boolean changed,int l,int t,int r,int b) {
+        if(changed) cancel();
         float density=density();
         for(int i=0;i<frames.size();i++) {
             ChordLayout.Key key=frames.get(i); android.view.View child=getChildAt(i);
-            int x=Math.round(key.x*density),y=Math.round(key.y*density);
+            int x=Math.round(key.x*density),y=Math.round(key.y*verticalScale*density);
             child.layout(x,y,x+child.getMeasuredWidth(),y+child.getMeasuredHeight());
         }
     }
@@ -192,4 +215,11 @@ final class ChordSurface extends ViewGroup {
         super.onSizeChanged(w,h,oldw,oldh); if(w!=oldw || h!=oldh) cancel();
     }
     @Override protected void onDetachedFromWindow() { cancel(); super.onDetachedFromWindow(); }
+    @Override public void onCancelPendingInputEvents() { super.onCancelPendingInputEvents(); if(gesture!=null) cancel(); }
+    @Override protected void onVisibilityChanged(View changedView,int visibility) {
+        super.onVisibilityChanged(changedView,visibility); if(visibility!=VISIBLE && gesture!=null) cancel();
+    }
+    @Override protected void onWindowVisibilityChanged(int visibility) {
+        super.onWindowVisibilityChanged(visibility); if(visibility!=VISIBLE && gesture!=null) cancel();
+    }
 }

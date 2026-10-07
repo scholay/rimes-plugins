@@ -22,6 +22,8 @@ final class ChordSurface extends ViewGroup {
         void onControl(ChordLayout.Action action);
         String label(ChordLayout.Action action);
         String description(ChordLayout.Action action);
+        /** A held delete may generate its next action only while its host can accept it. */
+        default boolean canRepeatDelete() { return true; }
     }
     private final Handler handler;
     private final ChordProfile profile=ChordProfile.builtIn();
@@ -89,6 +91,8 @@ final class ChordSurface extends ViewGroup {
         notifyPreview(); updateButtons();
     }
     boolean isChordActive() { return gesture.active() || ordinary.size()>0; }
+    /** Busy work pauses held deletes without changing ordinary tap or accessibility ordering. */
+    boolean canRepeatDelete() { return !isChordActive() && handler.canRepeatDelete(); }
     private float density() { return getResources().getDisplayMetrics().density; }
     private ChordLayout.Key keyAt(float x,float y) {
         if(verticalScale<=0) return null;

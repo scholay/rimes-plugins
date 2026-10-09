@@ -6,6 +6,7 @@
 
 namespace rimes::windows::official {
 inline constexpr const char* kAI = "builtin.openai-compatible";
+inline constexpr const char* kCodex = "builtin.codex-cli";
 inline constexpr const char* kTranslation = "builtin.apple-translation";
 inline constexpr const char* kChord = "builtin.fly-chord-learning";
 inline constexpr const char* kChordSchema = "my_combo";
@@ -19,6 +20,8 @@ inline void Validate(const core::Json& package) {
   const auto& options = contribution.at("options");
   if (id == kAI && type == "ai.channel.v1" &&
       options == core::Json{{"channel", "openai-compatible"}}) return;
+  if (id == kCodex && type == "ai.channel.v1" &&
+      options == core::Json{{"channel", "codex-cli"}}) return;
   if (id == kChord && type == "input.chord.v1" &&
       options == core::Json{{"schema", kChordSchema}, {"keymap", "Isaac2025"}}) return;
   if (id == kTranslation && type == "translation.v1" &&
@@ -30,7 +33,7 @@ inline void Validate(const core::Json& package) {
 }
 inline std::string Instruction(const core::Json& package, const std::string& language) {
   Validate(package);
-  if (package.at("id") == kAI)
+  if (package.at("id") == kAI || package.at("id") == kCodex)
     return "Respond to the user's text. Return only the requested answer.";
   if (package.at("id") != kTranslation)
     throw std::runtime_error("This plugin has no AI action");

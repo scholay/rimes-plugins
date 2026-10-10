@@ -37,7 +37,8 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           repository: scholay/rimes
-          ref: e02d4b7d515c810feb185a062b0e2a87da991db2
+          # Includes the Windows Codex adapter and matching catalog policy.
+          ref: e545b79139b6b2638c9e2c23ffc0ee79047c8997
           path: host
           persist-credentials: false
 
@@ -49,7 +50,10 @@ jobs:
 
       - name: Import candidate into the isolated host checkout
         shell: bash
-        run: python3 scripts/prepare-official-plugins.py --update-lock
+        run: |
+          python3 scripts/prepare-official-plugins.py --update-lock
+          python3 scripts/sync-buffer-plugin-catalog.py
+          python3 scripts/sync-buffer-plugin-catalog.py --check
 
       - name: Select macOS Xcode
         if: matrix.platform == 'macos'

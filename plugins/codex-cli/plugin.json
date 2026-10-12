@@ -5,7 +5,7 @@
   "summaryZH": "通过 Codex CLI 使用 ChatGPT 生成内容，可选择模型与推理深度。",
   "summaryEN": "ChatGPT official plugin; user data remains owned by the RIMES host.",
   "schemaVersion": 2,
-  "version": "1.1.0",
+  "version": "1.1.1",
   "kind": "buffer",
   "sdkVersion": 1,
   "minimumHostVersion": "1.1.0",
@@ -14,6 +14,10 @@
     "macos": {
       "legacyID": "builtin.codex-cli",
       "distribution": "download"
+    },
+    "windows": {
+      "legacyID": "builtin.codex-cli",
+      "distribution": "bundled"
     }
   },
   "capabilities": [

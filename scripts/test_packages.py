@@ -49,6 +49,16 @@ class PackageTests(unittest.TestCase):
         self.assertTrue({"macos", "ios", "android", "windows"} <= set(chord["platforms"]))
         self.assertIn("builtin.apple-translation", {p["id"] for p in items if "linux" in p["platforms"]})
 
+    def test_linux_capsule_modules_share_native_identity_and_filters(self):
+        items = {item["id"]: item for item in packages.manifests(packages.ROOT)}
+        for module in ("temporary", "capture", "notes", "resources", "passwords"):
+            item = items["builtin.capsule." + module]
+            self.assertEqual(item["platforms"]["linux"]["distribution"], "bundled")
+            self.assertEqual(item["platforms"]["linux"]["legacyID"], item["platforms"]["macos"]["legacyID"])
+            self.assertEqual(item["contribution"]["type"], "host.module.v1")
+            self.assertEqual(item["contribution"]["options"]["module"], module)
+            self.assertEqual(item["capabilities"], ["capsule.navigate"])
+
     def test_reject_unsafe_source_paths_and_symlinks(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)

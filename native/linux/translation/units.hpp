@@ -24,10 +24,12 @@ struct Unit {
 class Units {
 public:
     static constexpr std::size_t kLimit = 256 * 1024, kMaximumUnits = 200;
-    static constexpr std::int64_t kDebounceMs = 350, kMaximumWaitMs = 1200;
+    // Match native/macos/AppleTranslationPlugin.swift TranslationRefreshPolicy.
+    static constexpr std::int64_t kDebounceMs = 300, kMaximumWaitMs = 900;
     bool Synchronize(const std::vector<SourceBlock>& blocks, std::int64_t now_ms);
     void Clear();
     void Pause();
+    void ReturnToEdit();
     void Retry();
     std::optional<Unit> Begin(std::int64_t now_ms, bool force = false);
     bool Finish(std::string_view id, std::string_view ticket, std::string output, bool success, std::string_view target);

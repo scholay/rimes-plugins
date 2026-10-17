@@ -103,6 +103,10 @@ void Units::Retry() {
     paused_ = false;
     for (auto& unit : units_) if (unit.phase == Phase::Failed) unit.phase = Phase::Pending;
 }
+void Units::ReturnToEdit() {
+    Pause();
+    for (auto& unit : units_) { unit.output.clear(); unit.phase = Phase::Pending; unit.ticket.clear(); }
+}
 std::optional<Unit> Units::Begin(std::int64_t now, bool force) {
     if ((paused_ && !force) || Running()) return {};
     for (auto& unit : units_) {

@@ -7,8 +7,8 @@ int main() {
     Units units;
     Check(units.Synchronize({{"a", "第一句。"}, {"b", "第二句。尾"}}, 0), "valid source");
     Check(units.All().size() == 3 && units.All()[1].slices[0].offset == 0 && units.All()[2].slices[0].offset == 12, "exact UTF-8 slices");
-    Check(!units.Begin(349), "debounce");
-    auto first = units.Begin(350).value();
+    Check(!units.Begin(299), "debounce");
+    auto first = units.Begin(300).value();
     Check(units.Finish(first.id, first.ticket, "First.", true, "en"), "first translation");
     units.Synchronize({{"a", "第一句。"}, {"b", "第二句。尾部编辑"}}, 400);
     Check(units.All()[0].id == first.id && units.Preview() == "First. ", "stable prefix survives tail editing");
@@ -31,9 +31,9 @@ int main() {
     replacement = units.Begin(5000).value();
     Check(units.Finish(replacement.id, replacement.ticket, "  修改。  ", true, "zh-Hans"), "retry succeeds");
     Units continuous;
-    for (int i = 0; i <= 12; ++i) {
+    for (int i = 0; i <= 9; ++i) {
         continuous.Synchronize({{"tail", std::string(i + 1, 'x')}}, i * 100);
-        Check(bool(continuous.Begin(i * 100)) == (i == 12), "maximum wait under continuous typing");
+        Check(bool(continuous.Begin(i * 100)) == (i == 9), "maximum wait under continuous typing");
     }
     Units whitespace;
     const std::string text = "  \"Hello!\"  \n第二句。\n\n3.14 is a number.🙂";

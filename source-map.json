@@ -482,6 +482,48 @@
       "plugins": [
         "builtin.fly-chord-learning"
       ]
+    },
+    {
+      "source": "native/shared-python/local_translation.py",
+      "destination": "platforms/windows/translation/translate.py",
+      "plugins": [
+        "builtin.apple-translation"
+      ]
+    },
+    {
+      "source": "native/shared-python/local_translation.py",
+      "destination": "platforms/linux/translation/translation_core.py",
+      "plugins": [
+        "builtin.apple-translation"
+      ]
+    },
+    {
+      "source": "native/linux/translation/runtime.py",
+      "destination": "platforms/linux/translation/runtime.py",
+      "plugins": [
+        "builtin.apple-translation"
+      ]
+    },
+    {
+      "source": "native/linux/translation/resources.lock.json",
+      "destination": "platforms/linux/translation/resources.lock.json",
+      "plugins": [
+        "builtin.apple-translation"
+      ]
+    },
+    {
+      "source": "native/linux/translation/NOTICE.md",
+      "destination": "platforms/linux/translation/NOTICE.md",
+      "plugins": [
+        "builtin.apple-translation"
+      ]
+    },
+    {
+      "source": "native/linux/translation/test_runtime.py",
+      "destination": "platforms/linux/translation/test_runtime.py",
+      "plugins": [
+        "builtin.apple-translation"
+      ]
     }
   ]
 }

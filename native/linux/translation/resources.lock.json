@@ -1,0 +1,122 @@
+{
+  "format": 1,
+  "python": "3.12",
+  "runtime": "ct2-4.6-argos-1.9-linux-v1",
+  "models": [
+    {
+      "name": "zh_en",
+      "version": "1.9",
+      "file": "translate-zh_en-1_9.argosmodel",
+      "url": "https://argos-net.com/v1/translate-zh_en-1_9.argosmodel",
+      "kind": "model",
+      "sha256": "62e7af5a3a48b530e47b7b3e5c78c2de79073ecd815750d2bf3ab35b4a67da2d",
+      "bytes": 74481402
+    },
+    {
+      "name": "en_zh",
+      "version": "1.9",
+      "file": "translate-en_zh-1_9.argosmodel",
+      "url": "https://argos-net.com/v1/translate-en_zh-1_9.argosmodel",
+      "kind": "model",
+      "sha256": "433e7c4f034d87fbe2353161e05f18646d7999452f801a4e1f0378522b9850ab",
+      "bytes": 70743021
+    }
+  ],
+  "runtimes": {
+    "x86_64": [
+      {
+        "name": "ctranslate2",
+        "version": "4.6.0",
+        "file": "ctranslate2-4.6.0-cp312-cp312-manylinux_2_17_x86_64.manylinux2014_x86_64.whl",
+        "url": "https://files.pythonhosted.org/packages/ce/e9/06c2bf49d6808359d71f1126ec5b8e5a5c3c9526899ed58f24666e0e1b86/ctranslate2-4.6.0-cp312-cp312-manylinux_2_17_x86_64.manylinux2014_x86_64.whl",
+        "sha256": "06b2ca5c2905b540dd833a0b75d912ec9acc18d33a2dc4f85f12032851659a0d",
+        "kind": "wheel",
+        "bytes": 38816537
+      },
+      {
+        "name": "sentencepiece",
+        "version": "0.2.0",
+        "file": "sentencepiece-0.2.0-cp312-cp312-manylinux_2_17_x86_64.manylinux2014_x86_64.whl",
+        "url": "https://files.pythonhosted.org/packages/4f/d2/18246f43ca730bb81918f87b7e886531eda32d835811ad9f4657c54eee35/sentencepiece-0.2.0-cp312-cp312-manylinux_2_17_x86_64.manylinux2014_x86_64.whl",
+        "sha256": "f295105c6bdbb05bd5e1b0cafbd78ff95036f5d3641e7949455a3f4e5e7c3109",
+        "kind": "wheel",
+        "bytes": 1301706
+      },
+      {
+        "name": "numpy",
+        "version": "2.2.6",
+        "file": "numpy-2.2.6-cp312-cp312-manylinux_2_17_x86_64.manylinux2014_x86_64.whl",
+        "url": "https://files.pythonhosted.org/packages/8c/3d/1e1db36cfd41f895d266b103df00ca5b3cbe965184df824dec5c08c6b803/numpy-2.2.6-cp312-cp312-manylinux_2_17_x86_64.manylinux2014_x86_64.whl",
+        "sha256": "fd83c01228a688733f1ded5201c678f0c53ecc1006ffbc404db9f7a899ac6249",
+        "kind": "wheel",
+        "bytes": 16527618
+      },
+      {
+        "name": "PyYAML",
+        "version": "6.0.2",
+        "file": "PyYAML-6.0.2-cp312-cp312-manylinux_2_17_x86_64.manylinux2014_x86_64.whl",
+        "url": "https://files.pythonhosted.org/packages/b9/2b/614b4752f2e127db5cc206abc23a8c19678e92b23c3db30fc86ab731d3bd/PyYAML-6.0.2-cp312-cp312-manylinux_2_17_x86_64.manylinux2014_x86_64.whl",
+        "sha256": "80bab7bfc629882493af4aa31a4cfa43a4c57c83813253626916b8c7ada83476",
+        "kind": "wheel",
+        "bytes": 767542
+      },
+      {
+        "name": "setuptools",
+        "version": "80.9.0",
+        "file": "setuptools-80.9.0-py3-none-any.whl",
+        "url": "https://files.pythonhosted.org/packages/a3/dc/17031897dae0efacfea57dfd3a82fdd2a2aeb58e0ff71b77b87e44edc772/setuptools-80.9.0-py3-none-any.whl",
+        "sha256": "062d34222ad13e0cc312a4c02d73f059e86a4acbfbdea8f8f76b28c99f306922",
+        "kind": "wheel",
+        "bytes": 1201486
+      }
+    ],
+    "aarch64": [
+      {
+        "name": "ctranslate2",
+        "version": "4.6.0",
+        "file": "ctranslate2-4.6.0-cp312-cp312-manylinux_2_17_aarch64.manylinux2014_aarch64.whl",
+        "url": "https://files.pythonhosted.org/packages/3f/b3/77af5ad0e896dd27a10db768d7a67b8807e394c8e68c2fa559c662a33547/ctranslate2-4.6.0-cp312-cp312-manylinux_2_17_aarch64.manylinux2014_aarch64.whl",
+        "sha256": "44bf4b973ea985b80696093e11e9c72909aee55b35abb749428333822c70ce68",
+        "kind": "wheel",
+        "bytes": 17485132
+      },
+      {
+        "name": "sentencepiece",
+        "version": "0.2.0",
+        "file": "sentencepiece-0.2.0-cp312-cp312-manylinux_2_17_aarch64.manylinux2014_aarch64.whl",
+        "url": "https://files.pythonhosted.org/packages/cc/38/e4698ee2293fe4835dc033c49796a39b3eebd8752098f6bd0aa53a14af1f/sentencepiece-0.2.0-cp312-cp312-manylinux_2_17_aarch64.manylinux2014_aarch64.whl",
+        "sha256": "2a3149e3066c2a75e0d68a43eb632d7ae728c7925b517f4c05c40f6f7280ce08",
+        "kind": "wheel",
+        "bytes": 1259220
+      },
+      {
+        "name": "numpy",
+        "version": "2.2.6",
+        "file": "numpy-2.2.6-cp312-cp312-manylinux_2_17_aarch64.manylinux2014_aarch64.whl",
+        "url": "https://files.pythonhosted.org/packages/f8/35/8c80729f1ff76b3921d5c9487c7ac3de9b2a103b1cd05e905b3090513510/numpy-2.2.6-cp312-cp312-manylinux_2_17_aarch64.manylinux2014_aarch64.whl",
+        "sha256": "f2618db89be1b4e05f7a1a847a9c1c0abd63e63a1607d892dd54668dd92faf87",
+        "kind": "wheel",
+        "bytes": 14018462
+      },
+      {
+        "name": "PyYAML",
+        "version": "6.0.2",
+        "file": "PyYAML-6.0.2-cp312-cp312-manylinux_2_17_aarch64.manylinux2014_aarch64.whl",
+        "url": "https://files.pythonhosted.org/packages/c3/93/9916574aa8c00aa06bbac729972eb1071d002b8e158bd0e83a3b9a20a1f7/PyYAML-6.0.2-cp312-cp312-manylinux_2_17_aarch64.manylinux2014_aarch64.whl",
+        "sha256": "1f71ea527786de97d1a0cc0eacd1defc0985dcf6b3f17bb77dcfc8c34bec4dc5",
+        "kind": "wheel",
+        "bytes": 739154
+      },
+      {
+        "name": "setuptools",
+        "version": "80.9.0",
+        "file": "setuptools-80.9.0-py3-none-any.whl",
+        "url": "https://files.pythonhosted.org/packages/a3/dc/17031897dae0efacfea57dfd3a82fdd2a2aeb58e0ff71b77b87e44edc772/setuptools-80.9.0-py3-none-any.whl",
+        "sha256": "062d34222ad13e0cc312a4c02d73f059e86a4acbfbdea8f8f76b28c99f306922",
+        "kind": "wheel",
+        "bytes": 1201486
+      }
+    ]
+  },
+  "sourceWindowsLockSHA256": "4d2a206cdf71747ffd2072e37555b3accc17369789c3daa15c39a38c5387d888"
+}

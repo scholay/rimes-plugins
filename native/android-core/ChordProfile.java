@@ -15,7 +15,7 @@ public final class ChordProfile {
     private static final String ALPHABET="abcdefghijklmnopqrstuvwxyz,.";
     private static final Set<String> SYLLABLES=Collections.unmodifiableSet(new HashSet<>(Arrays.asList(ChordData.SYLLABLES.split(","))));
     private static final String[][] RULES={
-        {"^([aoe])(ng)?$","$1$1$2"},{"iu$","Ⓠ"},{"[iu]a$","Ⓦ"},{"[uv]an$","Ⓡ"},
+        {"^([aoe])(ng|)$","$1$1$2"},{"iu$","Ⓠ"},{"[iu]a$","Ⓦ"},{"[uv]an$","Ⓡ"},
         {"[uv]e$","Ⓣ"},{"ing$|uai$","Ⓨ"},{"^sh","Ⓤ"},{"^ch","Ⓘ"},{"^zh","Ⓥ"},
         {"uo$","Ⓞ"},{"[uv]n$","Ⓟ"},{"(.)i?ong$","$1Ⓢ"},{"[iu]ang$","Ⓓ"},
         {"(.)en$","$1Ⓕ"},{"(.)eng$","$1Ⓖ"},{"(.)ang$","$1Ⓗ"},{"ian$","Ⓜ"},

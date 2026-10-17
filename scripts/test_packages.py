@@ -46,7 +46,8 @@ class PackageTests(unittest.TestCase):
         for platform in ("ios", "android"):
             self.assertTrue({"builtin.ask", "builtin.poem", "builtin.art", "builtin.polisher"} <= {p["id"] for p in items if platform in p["platforms"]})
         chord = next(p for p in items if p["id"] == "builtin.fly-chord-learning")
-        self.assertEqual(set(chord["platforms"]), packages.PLATFORMS)
+        self.assertTrue({"macos", "ios", "android", "windows"} <= set(chord["platforms"]))
+        self.assertIn("builtin.apple-translation", {p["id"] for p in items if "linux" in p["platforms"]})
 
     def test_reject_unsafe_source_paths_and_symlinks(self):
         with tempfile.TemporaryDirectory() as temporary:

@@ -44,6 +44,21 @@ jobs:
       - name: Build plugin artifacts
         run: python3 scripts/packages.py
 
+      - name: Check out pinned host JSON headers for portable codec validation
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          repository: scholay/xsime
+          ref: cbd5f9db51a77419ecd7882eda6f18dbb309bb0c
+          path: .ci-host
+          sparse-checkout: platforms/windows/native/third_party/nlohmann
+          persist-credentials: false
+
+      - name: Test portable OpenAI stream contract
+        run: |
+          g++ -std=c++17 -Wall -Wextra -Werror -I .ci-host/platforms/windows/native/third_party \
+            native/shared/openai/chat_codec.cpp native/shared/openai/chat_codec_tests.cpp -o /tmp/ai-codec
+          /tmp/ai-codec
+
       - name: Upload candidate packages
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:

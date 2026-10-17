@@ -545,6 +545,27 @@
       "plugins": [
         "builtin.apple-translation"
       ]
+    },
+    {
+      "source": "native/shared/openai/chat_codec.hpp",
+      "destination": "platforms/linux/ai/chat_codec.hpp",
+      "plugins": [
+        "builtin.openai-compatible"
+      ]
+    },
+    {
+      "source": "native/shared/openai/chat_codec.cpp",
+      "destination": "platforms/linux/ai/chat_codec.cpp",
+      "plugins": [
+        "builtin.openai-compatible"
+      ]
+    },
+    {
+      "source": "native/shared/openai/chat_codec_tests.cpp",
+      "destination": "platforms/linux/ai/chat_codec_tests.cpp",
+      "plugins": [
+        "builtin.openai-compatible"
+      ]
     }
   ]
 }

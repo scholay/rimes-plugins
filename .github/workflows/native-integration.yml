@@ -38,7 +38,7 @@ jobs:
         with:
           repository: scholay/rimes
           # Includes shared validation for packages that also declare Linux.
-          ref: d7b43a0cc4686383b854ece8bd33fce3fa0a2d3f
+          ref: cbd5f9db51a77419ecd7882eda6f18dbb309bb0c
           path: host
           persist-credentials: false
 

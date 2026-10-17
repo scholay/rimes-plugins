@@ -29,6 +29,10 @@ inline void Validate(const core::Json& package) {
     const auto text = contribution.at("instructions").at("default").get<std::string>();
     if (!text.empty() && text.size() <= 32768) return;
   }
+  if (id == "builtin.statistics" && type == "metrics.v1" &&
+      options == core::Json{{"events", "key-count,commit-count"}, {"storage", "local"}}) return;
+  if (id == "builtin.typing-speed" && type == "typing.practice.v1" &&
+      options == core::Json{{"source", "practice"}, {"storage", "local"}}) return;
   throw std::runtime_error("Unsupported Windows plugin contribution");
 }
 inline std::string Instruction(const core::Json& package, const std::string& language) {

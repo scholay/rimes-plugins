@@ -14,6 +14,10 @@
     "macos": {
       "legacyID": "builtin.capsule.passwords",
       "distribution": "bundled"
+    },
+    "linux": {
+      "distribution": "bundled",
+      "legacyID": "builtin.capsule.passwords"
     }
   },
   "capabilities": [

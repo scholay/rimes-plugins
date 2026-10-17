@@ -46,10 +46,11 @@ bool Units::Synchronize(const std::vector<SourceBlock>& blocks, std::int64_t now
     std::string source;
     std::set<std::string> identities;
     for (const auto& block : blocks) {
-        if (block.id.empty() || !identities.insert(block.id).second || !ValidText(block.text) || block.text.size() > kLimit - source.size()) { Clear(); return false; }
+        if (block.id.empty() || !identities.insert(block.id).second || !ValidText(block.text) || block.text.size() > kLimit - source.size()) { ResetMutable(); return false; }
         source += block.text;
     }
     const auto runes = Runes(source);
+    if (std::all_of(runes.begin(), runes.end(), [](const auto& c) { return Space(c.value); })) { ResetMutable(); return true; }
     std::vector<std::size_t> ends;
     for (std::size_t at = 0; at < runes.size() && ends.size() < kMaximumUnits - 1; ++at) {
         const auto c = runes[at].value;
@@ -94,7 +95,8 @@ bool Units::Synchronize(const std::vector<SourceBlock>& blocks, std::int64_t now
     if (changed) paused_ = false;
     return true;
 }
-void Units::Clear() { units_.clear(); paused_ = false; }
+void Units::Clear() { ResetMutable(); retired_.clear(); }
+void Units::ResetMutable() { units_.clear(); paused_ = false; }
 void Units::Pause() {
     paused_ = true;
     for (auto& unit : units_) if (unit.phase == Phase::Running) { unit.phase = Phase::Pending; unit.ticket.clear(); }
@@ -105,7 +107,7 @@ void Units::Retry() {
 }
 void Units::ReturnToEdit() {
     Pause();
-    for (auto& unit : units_) { unit.output.clear(); unit.phase = Phase::Pending; unit.ticket.clear(); }
+    for (auto& unit : units_) { unit.output.clear(); unit.children.clear(); unit.phase = Phase::Pending; unit.ticket.clear(); }
 }
 std::optional<Unit> Units::Begin(std::int64_t now, bool force) {
     if ((paused_ && !force) || Running()) return {};
@@ -125,15 +127,59 @@ bool Units::Finish(std::string_view id, std::string_view ticket, std::string out
     if (success) output = Format(std::move(output), found->source, target);
     std::size_t total = 0;
     for (const auto& unit : units_) total += unit.output.size();
+    for (const auto& unit : retired_) total += unit.output.size();
     success &= !output.empty() && output.size() <= kLimit - std::min(total, kLimit);
     found->output = success ? std::move(output) : "";
+    found->children.clear();
+    if (success) {
+        auto segments = split_ ? split_(found->output) : std::vector<std::string>{found->output};
+        std::string joined; for (const auto& segment : segments) joined += segment;
+        success = joined == found->output && !segments.empty() && std::none_of(segments.begin(), segments.end(), [](const auto& s) { return s.empty(); });
+        if (success) {
+            // Bound display fan-out without truncating translated text.
+            if (segments.size() > kMaximumUnits) {
+                for (std::size_t i = kMaximumUnits; i < segments.size(); ++i) segments[kMaximumUnits - 1] += segments[i];
+                segments.resize(kMaximumUnits);
+            }
+            for (auto& segment : segments) found->children.push_back({"translation-output-" + std::to_string(++sequence_), std::move(segment)});
+        } else found->output.clear();
+    }
     found->phase = success ? Phase::Ready : Phase::Failed;
     return success;
 }
 const Unit* Units::Find(std::string_view id) const { const auto at = std::find_if(units_.begin(), units_.end(), [&](const auto& unit) { return unit.id == id; }); return at == units_.end() ? nullptr : &*at; }
-bool Units::Complete() const { return !units_.empty() && std::all_of(units_.begin(), units_.end(), [](const auto& u) { return u.phase == Phase::Ready; }); }
+bool Units::Complete() const { return (!units_.empty() || !retired_.empty()) && std::all_of(units_.begin(), units_.end(), [](const auto& u) { return u.phase == Phase::Ready; }); }
 bool Units::Failed() const { return std::any_of(units_.begin(), units_.end(), [](const auto& u) { return u.phase == Phase::Failed; }); }
 bool Units::HasPending() const { return std::any_of(units_.begin(), units_.end(), [](const auto& u) { return u.phase == Phase::Pending; }); }
 bool Units::Running() const { return std::any_of(units_.begin(), units_.end(), [](const auto& u) { return u.phase == Phase::Running; }); }
-std::string Units::Preview() const { std::string text; for (const auto& unit : units_) { if (unit.phase != Phase::Ready) break; text += unit.output; } return text; }
+std::string Units::Preview() const { std::string text; for (const auto& unit : retired_) text += unit.output; for (const auto& unit : units_) { if (unit.phase != Phase::Ready) break; text += unit.output; } return text; }
+std::optional<Delivery> Units::Head() const {
+    const auto* unit = !retired_.empty() ? &retired_.front() : units_.empty() ? nullptr : &units_.front();
+    if (!unit || unit->phase != Phase::Ready || unit->children.empty()) return {};
+    return Delivery{unit->id, unit->children.front().id, unit->children.front().text, unit->slices, !retired_.empty()};
+}
+bool Units::Consume(const Delivery& delivery) {
+    const auto current = Head();
+    if (!current || current->unit != delivery.unit || current->child != delivery.child || current->text != delivery.text || current->source != delivery.source || current->retired != delivery.retired) return false;
+    auto& owner = delivery.retired ? retired_.front() : units_.front();
+    owner.children.erase(owner.children.begin());
+    owner.output.clear(); for (const auto& child : owner.children) owner.output += child.text;
+    if (delivery.retired) {
+        if (owner.children.empty()) retired_.erase(retired_.begin());
+        return true;
+    }
+    auto frozen = std::move(owner);
+    units_.erase(units_.begin());
+    // Source consumption shifts offsets only; later untouched sentences keep
+    // their IDs, in-flight tickets and output clocks.
+    for (auto& unit : units_) for (auto& slice : unit.slices) {
+        std::size_t shift = 0;
+        for (const auto& consumed : delivery.source)
+            if (consumed.block == slice.block && consumed.offset + consumed.text.size() <= slice.offset) shift += consumed.text.size();
+        slice.offset -= shift;
+    }
+    frozen.source.clear(); frozen.slices.clear(); frozen.ticket.clear();
+    if (!frozen.children.empty()) retired_.push_back(std::move(frozen));
+    return true;
+}
 } // namespace rimes::translation

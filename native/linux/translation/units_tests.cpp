@@ -52,5 +52,28 @@ int main() {
     Check(reconstructed == long_input, "large paste is never truncated");
     Check(!bounded.Synchronize({{"bad", "\xed\xa0\x80"}}, 0) && bounded.All().empty(), "invalid UTF-8 refuses source");
     Check(!bounded.Synchronize({{"same", "a"}, {"same", "b"}}, 0), "duplicate source identity refused");
+    Units delivery;
+    delivery.SetSegmenter([](std::string_view text) { return std::vector<std::string>{std::string(text.substr(0, 6)), std::string(text.substr(6))}; });
+    delivery.Synchronize({{"shared", "前句。后句。"}}, 0);
+    auto front = delivery.Begin(300).value();
+    Check(delivery.Finish(front.id, front.ticket, "First translated sentence", true, "en"), "segment translated output");
+    auto following = delivery.Begin(300).value();
+    auto head = delivery.Head().value();
+    Check(!head.retired && head.source.size() == 1 && head.source[0].text == "前句。", "first child owns exact full source sentence");
+    Check(delivery.Consume(head), "native success retires source once");
+    auto suffix = delivery.Head().value();
+    Check(suffix.retired && suffix.source.empty() && suffix.child != head.child, "unsent child becomes independent immutable output");
+    Check(!delivery.Consume(head), "duplicate callback cannot consume twice");
+    delivery.Synchronize({{"shared", "后句。"}}, 400);
+    Check(delivery.All()[0].id == following.id && delivery.All()[0].slices[0].offset == 0, "consumption rebases untouched sentence without retranslating");
+    Check(delivery.Finish(following.id, following.ticket, "Second translated sentence", true, "en"), "inflight following sentence retains ownership");
+    delivery.Pause(); delivery.ResetMutable();
+    Check(delivery.Head()->child == suffix.child && delivery.Preview() == suffix.text, "owner/configuration pause preserves immutable suffix");
+    delivery.Synchronize({{"new", "继续。"}}, 500);
+    Check(delivery.Head()->child == suffix.child, "fresh source follows frozen output");
+    Check(delivery.Consume(suffix), "remaining child consumes no source");
+    Check(delivery.Retired().empty() && !delivery.Head(), "source waits for its own result");
+    delivery.Clear();
+    Check(delivery.Preview().empty(), "privacy discard removes pending output");
     std::cout << "Translation units: slices, debounce/deadline, incremental edits, cancellation, retry and bounds passed\n";
 }

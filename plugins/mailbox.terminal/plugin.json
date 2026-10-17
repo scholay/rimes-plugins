@@ -14,6 +14,10 @@
     "macos": {
       "legacyID": "builtin.mailbox.terminal",
       "distribution": "bundled"
+    },
+    "linux": {
+      "legacyID": "builtin.mailbox.terminal",
+      "distribution": "bundled"
     }
   },
   "capabilities": [

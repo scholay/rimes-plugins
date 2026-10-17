@@ -59,6 +59,17 @@ class PackageTests(unittest.TestCase):
             self.assertEqual(item["contribution"]["options"]["module"], module)
             self.assertEqual(item["capabilities"], ["capsule.navigate"])
 
+    def test_linux_mailbox_modules_keep_navigation_only_authority(self):
+        items = {item["id"]: item for item in packages.manifests(packages.ROOT)}
+        for module in ("terminal", "chat", "inbox"):
+            item = items["builtin.mailbox." + module]
+            self.assertEqual(item["platforms"]["linux"]["distribution"], "bundled")
+            self.assertEqual(item["platforms"]["linux"]["legacyID"], item["id"])
+            self.assertEqual(item["contribution"]["options"]["host"], "mailbox")
+            self.assertEqual(item["contribution"]["options"]["module"], module)
+            self.assertEqual(item["capabilities"], ["mailbox.navigate"])
+            self.assertEqual(item["contribution"]["options"]["actions"], "open" if module == "terminal" else "open,search")
+
     def test_reject_unsafe_source_paths_and_symlinks(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)

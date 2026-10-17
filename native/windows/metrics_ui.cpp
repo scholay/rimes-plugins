@@ -349,6 +349,9 @@ struct ExtensionPages::Impl {
       Put(7103, 255, 0, 100, 28);
       auto date =
           Make(7104, DATETIMEPICK_CLASSW, L"选择统计日期", DTS_SHORTDATEFORMAT);
+      SetWindowSubclass(date, ComboProc, 1, reinterpret_cast<DWORD_PTR>(this));
+      SendMessageW(date, DTM_SETFORMATW, 0,
+                   reinterpret_cast<LPARAM>(L"yyyy-MM-dd"));
       Put(7104, w - 170, 0, 170, 28);
       SYSTEMTIME limits[2]{};
       GetLocalTime(&limits[1]);
@@ -1182,6 +1185,10 @@ struct ExtensionPages::Impl {
     }
     if (msg != WM_PAINT && msg != WM_PRINTCLIENT && msg != WM_PRINT)
       return DefSubclassProc(h, msg, w, l);
+    // Preserve the native segmented date editor while it has keyboard focus.
+    // Its resting state follows the same theme as the other selector controls.
+    if (GetDlgCtrlID(h) == 7104 && GetFocus() == h)
+      return DefSubclassProc(h, msg, w, l);
     PAINTSTRUCT ps{};
     auto dc = msg == WM_PAINT ? BeginPaint(h, &ps) : reinterpret_cast<HDC>(w);
     RECT r{};
@@ -1197,7 +1204,8 @@ struct ExtensionPages::Impl {
     SelectObject(dc, self->fonts.body);
     SetBkMode(dc, TRANSPARENT);
     SetTextColor(dc, ui::ToColorRef(p.text_primary));
-    const auto text = Text(h);
+    const auto text =
+        GetDlgCtrlID(h) == 7104 ? Wide(self->selected_day) : Text(h);
     DrawTextW(dc, text.c_str(), -1, &label,
               DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
     auto pen =

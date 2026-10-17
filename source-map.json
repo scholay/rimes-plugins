@@ -524,6 +524,27 @@
       "plugins": [
         "builtin.apple-translation"
       ]
+    },
+    {
+      "source": "native/linux/translation/units.hpp",
+      "destination": "platforms/linux/translation/units.hpp",
+      "plugins": [
+        "builtin.apple-translation"
+      ]
+    },
+    {
+      "source": "native/linux/translation/units.cpp",
+      "destination": "platforms/linux/translation/units.cpp",
+      "plugins": [
+        "builtin.apple-translation"
+      ]
+    },
+    {
+      "source": "native/linux/translation/units_tests.cpp",
+      "destination": "platforms/linux/translation/units_tests.cpp",
+      "plugins": [
+        "builtin.apple-translation"
+      ]
     }
   ]
 }

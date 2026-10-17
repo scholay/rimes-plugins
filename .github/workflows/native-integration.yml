@@ -37,8 +37,8 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           repository: scholay/rimes
-          # Includes the Windows Codex adapter and matching catalog policy.
-          ref: e545b79139b6b2638c9e2c23ffc0ee79047c8997
+          # Includes shared validation for packages that also declare Linux.
+          ref: cbd5f9db51a77419ecd7882eda6f18dbb309bb0c
           path: host
           persist-credentials: false
 

@@ -35,6 +35,12 @@ jobs:
       - name: Test package validation and reproducible source bundles
         run: python3 -m unittest discover -s scripts -p 'test_*.py' -v
 
+      - name: Test Linux translation resources and incremental ownership
+        run: |
+          python3 native/linux/translation/test_runtime.py
+          g++ -std=c++17 -Wall -Wextra -Werror native/linux/translation/units.cpp native/linux/translation/units_tests.cpp -o /tmp/translation-units
+          /tmp/translation-units
+
       - name: Build plugin artifacts
         run: python3 scripts/packages.py
 

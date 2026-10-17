@@ -15,7 +15,7 @@ import zipfile
 ROOT = Path(__file__).resolve().parents[1]
 VERSION = re.compile(r"(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)")
 IDENTIFIER = re.compile(r"[a-z][a-z0-9]*(?:[.-][a-z0-9]+)+")
-PLATFORMS = {"macos", "ios", "android", "windows"}
+PLATFORMS = {"macos", "ios", "android", "windows", "linux"}
 MAX_PACKAGE_BYTES = 256 * 1024
 
 

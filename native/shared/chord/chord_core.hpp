@@ -84,4 +84,17 @@ class Pairing {
   private:
     std::optional<SettledLeft> left_;
 };
+
+struct Exercise {
+    std::string id, keys, output;
+};
+struct Course {
+    std::string id, title;
+    std::size_t key_count;
+    std::vector<Exercise> mappings;
+};
+std::vector<Course> Curriculum(const Profile& profile);
+std::vector<Exercise> Sample(const Course& course, std::size_t limit, const Json& items,
+                             std::uint64_t seed);
+bool Matches(std::string_view captured, std::string_view expected);
 } // namespace rimes::chord

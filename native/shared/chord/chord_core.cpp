@@ -1,8 +1,11 @@
 #include "chord_core.hpp"
 #include "native_chord_contract.hpp"
 #include <algorithm>
+#include <iomanip>
+#include <map>
 #include <memory>
 #include <set>
+#include <sstream>
 #include <stdexcept>
 #include <unicode/brkiter.h>
 #include <unicode/uchar.h>
@@ -122,8 +125,12 @@ Profile Profile::Parse(const Json& value, bool require_mappings) {
     result.right = String(value, "rightKeys");
     if (!value.contains("mappings") || !value["mappings"].is_array())
         Invalid("键位映射须为列表");
-    const auto boundary = value.value("boundaryPolicy", std::string("explicitSyllables"));
-    const auto encoding = value.value("outputEncoding", std::string("fullPinyin"));
+    const auto boundary = value.contains("boundaryPolicy") && !value["boundaryPolicy"].is_null()
+                              ? String(value, "boundaryPolicy")
+                              : "explicitSyllables";
+    const auto encoding = value.contains("outputEncoding") && !value["outputEncoding"].is_null()
+                              ? String(value, "outputEncoding")
+                              : "fullPinyin";
     if (boundary != "legacyBatches" && boundary != "explicitSyllables")
         Invalid("未知的音节边界类型");
     if (encoding != "fullPinyin" && encoding != "ziranma")
@@ -372,5 +379,76 @@ std::optional<SettledLeft> Pairing::Take(std::string_view keys, const Context& c
         !profile.MayCombine(previous->keys + std::string(keys)))
         return std::nullopt;
     return previous;
+}
+namespace {
+std::uint64_t FNV(std::string_view value) {
+    std::uint64_t hash = 14695981039346656037ULL;
+    for (unsigned char byte : value)
+        hash = (hash ^ byte) * 1099511628211ULL;
+    return hash;
+}
+std::uint64_t Next(std::uint64_t& state) {
+    auto value = (state += 0x9E3779B97F4A7C15ULL);
+    value = (value ^ (value >> 30)) * 0xBF58476D1CE4E5B9ULL;
+    value = (value ^ (value >> 27)) * 0x94D049BB133111EBULL;
+    return value ^ (value >> 31);
+}
+} // namespace
+std::vector<Course> Curriculum(const Profile& profile) {
+    if (!profile.native_schema.empty())
+        throw std::runtime_error(
+            "「" + profile.name +
+            "」由方案自身定义码元与字词，不提供飞耀课程；可使用麓鸣的并击练习器练习");
+    std::vector<Course> courses;
+    if (profile.id == "builtin.flyyao") {
+        for (const auto& item : Contract().at("learning").at(0).at("courses")) {
+            Course course{item.at("id"), item.at("title"), item.at("keyCount"), {}};
+            for (const auto& mapping : item.at("mappings"))
+                course.mappings.push_back(
+                    {mapping.at("id"), mapping.at("keys"), mapping.at("output")});
+            courses.push_back(std::move(course));
+        }
+        return courses;
+    }
+    std::map<std::size_t, std::vector<Exercise>> groups;
+    for (const auto& entry : profile.mappings) {
+        const auto keys = profile.Canonical(entry.keys);
+        std::ostringstream hex;
+        hex << std::hex << std::setfill('0') << std::setw(16)
+            << FNV(profile.SchemaID() + '\0' + keys + '\0' + entry.output);
+        groups[keys.size()].push_back(
+            {profile.SchemaID() + ".rule." + hex.str(), keys, entry.output});
+    }
+    const std::vector<std::string> titles = {"", "单键热身", "双键基础", "三键进阶", "四键强化"};
+    for (auto& [count, mappings] : groups)
+        courses.push_back(
+            {profile.SchemaID() + ".keys." + std::to_string(count),
+             count < titles.size() ? titles[count] : std::to_string(count) + " 键挑战", count,
+             std::move(mappings)});
+    return courses;
+}
+std::vector<Exercise> Sample(const Course& course, std::size_t limit, const Json& items,
+                             std::uint64_t seed) {
+    std::vector<Exercise> tiers[3], result;
+    for (const auto& entry : course.mappings) {
+        unsigned tier = 0;
+        if (items.contains(entry.id) && items.at(entry.id).at("attempts") != 0)
+            tier = items.at(entry.id).at("bestStreak").get<std::uint64_t>() >= 3 ? 2 : 1;
+        tiers[tier].push_back(entry);
+    }
+    auto state = seed ^ FNV(course.id);
+    for (auto& tier : tiers) {
+        for (auto size = tier.size(); size > 1; --size)
+            std::swap(tier[size - 1], tier[Next(state) % size]);
+        for (const auto& entry : tier)
+            if (result.size() < limit)
+                result.push_back(entry);
+    }
+    return result;
+}
+bool Matches(std::string_view captured, std::string_view expected) {
+    return !captured.empty() && captured.size() == expected.size() &&
+           std::set<char>(captured.begin(), captured.end()) ==
+               std::set<char>(expected.begin(), expected.end());
 }
 } // namespace rimes::chord

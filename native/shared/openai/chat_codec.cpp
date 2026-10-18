@@ -19,8 +19,8 @@ std::string Trim(std::string_view text) {
     if (start == text.npos) return {};
     return std::string(text.substr(start, text.find_last_not_of(" \r\n\t") - start + 1));
 }
-void ValidText(std::string_view text) {
-    if (text.size() > kTextLimit) throw Failure(Error::TooLarge);
+void ValidText(std::string_view text, std::size_t maximum = kTextLimit) {
+    if (text.size() > maximum) throw Failure(Error::TooLarge);
     if (text.find('\0') != text.npos) throw Failure(Error::Invalid);
     try { (void)Json(std::string(text)).dump(); }
     catch (const std::exception&) { throw Failure(Error::Invalid); }
@@ -61,15 +61,16 @@ std::string Content(const Json& value) {
     return result;
 }
 }
-std::string RequestBody(std::string_view model, std::string_view source, std::string_view system_prompt) {
-    ValidText(source); ValidText(model); ValidText(system_prompt);
+std::string RequestBody(std::string_view model, std::string_view source, std::string_view system_prompt, std::size_t maximum_source) {
+    ValidText(source, std::min(maximum_source, kWireLimit)); ValidText(model); ValidText(system_prompt);
     if (Trim(source).empty() || Trim(model).empty() || model.size() > 256) throw Failure(Error::Invalid);
     return Json{{"model", model}, {"stream", true}, {"messages", Json::array({
         {{"role", "system"}, {"content", system_prompt}}, {{"role", "user"}, {"content", source}}})}}.dump();
 }
-std::string Joined(const std::vector<std::string>& blocks) {
+std::string Joined(const std::vector<std::string>& blocks, std::string_view separator) {
     std::string text;
     for (const auto& block : blocks) {
+        if (!text.empty()) { if (separator.size() > kTextLimit - text.size()) throw Failure(Error::TooLarge); text += separator; }
         if (block.size() > kTextLimit - text.size()) throw Failure(Error::TooLarge);
         text += block;
     }
@@ -150,7 +151,7 @@ void Decoder::Finish() {
     if (!done_) throw Failure(Error::Incomplete);
     (void)Blocks();
 }
-std::string Decoder::Preview() const {
+std::string Decoder::Preview(std::string_view separator) const {
     const auto text = Candidate(text_);
     if (text.empty()) return {};
     if (text.front() != '{' && text.front() != '[') return text;
@@ -172,6 +173,6 @@ std::string Decoder::Preview() const {
             if (blocks.size() > 20) throw Failure(Error::Invalid);
         }
     }
-    return Joined(blocks);
+    return Joined(blocks, separator);
 }
 } // namespace rimes::openai

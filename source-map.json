@@ -580,6 +580,20 @@
       "plugins": [
         "builtin.fly-chord-learning"
       ]
+    },
+    {
+      "source": "native/shared/statistics/metrics_core.hpp",
+      "destination": "platforms/linux/statistics/core/metrics_core.hpp",
+      "plugins": [
+        "builtin.statistics"
+      ]
+    },
+    {
+      "source": "native/shared/statistics/metrics_core.cpp",
+      "destination": "platforms/linux/statistics/core/metrics_core.cpp",
+      "plugins": [
+        "builtin.statistics"
+      ]
     }
   ]
 }

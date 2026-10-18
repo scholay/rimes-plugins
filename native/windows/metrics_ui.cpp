@@ -126,11 +126,11 @@ std::wstring Description(const std::string& id) {
     return L"通过 Codex CLI 连接 Buffer 的 AI 功能。";
   if (id == "builtin.openai-compatible")
     return L"通过 OpenAI 兼容接口连接 Buffer 的 AI 功能。";
-  if (id.ends_with("temporary")) return L"暂存与整理临时内容。";
-  if (id.ends_with("capture")) return L"显式开启剪贴板收录与内容捕获。";
+  if (id.ends_with("temporary")) return L"可开启剪贴板历史，收录文字、图片和文件；支持搜索、复制与收藏。";
+  if (id.ends_with("capture")) return L"Alt+Shift+4 框选截图、左下角堆栈、图片复制与再次编辑。录屏、OCR、多图拼接尚未实现。";
   if (id.ends_with("notes")) return L"在本机保存、编辑与查找笔记。";
-  if (id.ends_with("resources")) return L"管理资源与文件引用。";
-  if (id.ends_with("passwords")) return L"受保护的本机密码内容库。";
+  if (id.ends_with("resources")) return L"保存和打开本机资源路径；文献引用排版尚未实现。";
+  if (id.ends_with("passwords")) return L"加密保存、四组物理并击验证、查看与复制；结构化字段和 TOTP 尚未实现。";
   if (id.ends_with("terminal")) return L"管理持续运行的终端会话。";
   if (id.ends_with("chat")) return L"独立 AI 对话与完整消息记录。";
   return L"集中查看收件与消息内容。";
@@ -138,7 +138,7 @@ std::wstring Description(const std::string& id) {
 }  // namespace
 
 struct ExtensionPages::Impl {
-  HWND hwnd = nullptr, parent = nullptr, editor = nullptr, target = nullptr;
+  HWND hwnd = nullptr, parent = nullptr, editor = nullptr, target = nullptr, scrollbar = nullptr;
   ExtensionCallbacks cb;
   std::shared_ptr<metrics::Service> service;
   ui::SettingsPage page = ui::SettingsPage::kInput;
@@ -163,6 +163,8 @@ struct ExtensionPages::Impl {
   std::wstring status = L"选择文章后开始跟打", message;
   bool suppress = false, visible = false, stopping = false, was_armed = false;
   Json last_states;
+  Json last_practice;
+  std::wstring last_practice_status;
   int Px(double v) const { return static_cast<int>(std::lround(v * dpi / 96)); }
   RECT Rect(ui::DipRect r) const {
     return {Px(r.left), Px(r.top - scroll), Px(r.right), Px(r.bottom - scroll)};
@@ -182,8 +184,14 @@ struct ExtensionPages::Impl {
     RegisterClassW(&wc);
     hwnd =
         CreateWindowExW(WS_EX_CONTROLPARENT, wc.lpszClassName, L"内置插件内容",
-                        WS_CHILD | WS_VSCROLL | WS_CLIPCHILDREN, 0, 0, 1, 1,
+                        WS_CHILD | WS_CLIPCHILDREN, 0, 0, 1, 1,
                         parent, nullptr, wc.hInstance, this);
+    // Retain native scrollbar dragging, keyboard control and accessibility,
+    // but draw a narrow theme-aware client control instead of the system gutter.
+    scrollbar = CreateWindowExW(0, L"SCROLLBAR", L"页面滚动",
+        WS_CHILD | WS_TABSTOP | SBS_VERT, 0, 0, 1, 1, hwnd,
+        reinterpret_cast<HMENU>(7200), wc.hInstance, nullptr);
+    SetWindowSubclass(scrollbar, ScrollbarProc, 1, reinterpret_cast<DWORD_PTR>(this));
     SetTimer(hwnd, 1, 200, nullptr);
   }
   ~Impl() {
@@ -236,7 +244,57 @@ struct ExtensionPages::Impl {
     info.nMax = (std::max)(0, total - 1);
     info.nPage = height;
     info.nPos = scroll;
-    SetScrollInfo(hwnd, SB_VERT, &info, TRUE);
+    SetScrollInfo(scrollbar, SB_CTL, &info, TRUE);
+    SetWindowPos(scrollbar, nullptr, Px(width - 12), 0, Px(12), Px(height),
+                 SWP_NOACTIVATE | SWP_NOZORDER);
+    ShowWindow(scrollbar, total > height ? SW_SHOWNA : SW_HIDE);
+    InvalidateRect(scrollbar, nullptr, FALSE);
+  }
+  static LRESULT CALLBACK ScrollbarProc(HWND h, UINT msg, WPARAM w, LPARAM l,
+                                        UINT_PTR id, DWORD_PTR ref) {
+    auto* self = reinterpret_cast<Impl*>(ref);
+    if (msg == WM_NCDESTROY) RemoveWindowSubclass(h, ScrollbarProc, id);
+    if (msg == WM_ERASEBKGND) return 1;
+    if (msg == WM_PAINT || msg == WM_PRINTCLIENT || msg == WM_PRINT) {
+      PAINTSTRUCT paint{};
+      auto dc = msg == WM_PAINT ? BeginPaint(h, &paint) : reinterpret_cast<HDC>(w);
+      RECT r{}; GetClientRect(h, &r);
+      const auto& p = self->Palette();
+      ui::FillRectColor(dc, r, ui::ToColorRef(p.settings_background));
+      SCROLLBARINFO bar{sizeof(bar)};
+      if (GetScrollBarInfo(h, OBJID_CLIENT, &bar)) {
+        const bool pressed = (bar.rgstate[3] & STATE_SYSTEM_PRESSED) != 0;
+        POINT mouse{}; GetCursorPos(&mouse); ScreenToClient(h, &mouse);
+        const bool hover = PtInRect(&r, mouse) != FALSE;
+        const int thumb_width = self->Px(hover || pressed ? 7 : 5);
+        RECT thumb{(r.right - thumb_width) / 2, bar.xyThumbTop,
+                   (r.right + thumb_width) / 2, bar.xyThumbBottom};
+        if (thumb.bottom > thumb.top)
+          ui::FillRoundRect(dc, thumb, self->Px(3), ui::ToColorRef(
+              pressed ? p.text_secondary : ui::Blend(p.settings_background, p.text_secondary, hover ? .65f : .45f)));
+        // Keep the native arrow hit areas visible; no bevels or white boxes.
+        const auto pen = CreatePen(PS_SOLID, (std::max)(1, self->Px(1)), ui::ToColorRef(p.text_muted));
+        const auto old = SelectObject(dc, pen);
+        for (int direction : {-1, 1}) {
+          const int cy = direction < 0 ? bar.dxyLineButton / 2 : r.bottom - bar.dxyLineButton / 2;
+          const int cx = r.right / 2, span = self->Px(2);
+          MoveToEx(dc, cx - span, cy - direction * span / 2, nullptr);
+          LineTo(dc, cx, cy + direction * span / 2);
+          LineTo(dc, cx + span, cy - direction * span / 2);
+        }
+        SelectObject(dc, old); DeleteObject(pen);
+      }
+      if (msg == WM_PAINT) EndPaint(h, &paint);
+      return 0;
+    }
+    if (msg == WM_MOUSEMOVE) {
+      TRACKMOUSEEVENT track{sizeof(track), TME_LEAVE, h, 0};
+      TrackMouseEvent(&track);
+    }
+    const auto result = DefSubclassProc(h, msg, w, l);
+    if (msg == WM_MOUSEMOVE || msg == WM_MOUSELEAVE || msg == WM_LBUTTONUP || msg == WM_ENABLE)
+      InvalidateRect(h, nullptr, FALSE);
+    return result;
   }
   void Reveal(HWND control) {
     const int id = GetDlgCtrlID(control);
@@ -388,6 +446,8 @@ struct ExtensionPages::Impl {
     scroll = (std::clamp)(scroll, 0, (std::max)(0, total - height));
     ShowControls();
     Colors();
+    last_practice = Json();
+    last_practice_status.clear();
     InvalidateRect(hwnd, nullptr, FALSE);
   }
   void PopulateHistory(HWND contexts) {
@@ -456,9 +516,11 @@ struct ExtensionPages::Impl {
         const float x = col * (card + gap);
         cards.push_back({{x, y, x + card, y + 128}, i});
         const int id = 8000 + static_cast<int>(i) * 4;
-        Button(id, p.enabled ? L"停用" : p.installed ? L"启用" : L"安装");
+        Button(id, p.enabled ? L"停用" : p.installed ? L"启用" : p.can_install ? L"安装" : L"未实现");
+        EnableWindow(controls[id], p.installed || p.can_install);
         Button(id + 1, L"详情");
         Button(id + 2, L"设置");
+        EnableWindow(controls[id + 2], p.installed && p.enabled);
         Button(id + 3, L"卸载…");
         Put(id, x + card - 63, y + 94, 54, 26);
         Put(id + 1, x + card - 104, y + 9, 42, 23);
@@ -596,6 +658,20 @@ struct ExtensionPages::Impl {
           status = L"成绩未能保存 · " + Wide(service->Issue());
         was_armed = false;
       }
+      // A resting practice page has no animation. Timer ticks still check
+      // input-source/configuration changes, but only changed metrics repaint.
+      if (snapshot != last_practice || status != last_practice_status) {
+        last_practice = snapshot;
+        last_practice_status = status;
+        // Keep the article and RichEdit input out of periodic metric updates.
+        // Scrolling/layout changes still invalidate the entire page separately.
+        for (const auto& area : {ui::DipRect{0, 66, static_cast<float>(width - 18), 198},
+                                 ui::DipRect{0, 540, static_cast<float>(width - 18), 850}}) {
+          const auto rect = Rect(area);
+          InvalidateRect(hwnd, &rect, FALSE);
+        }
+      }
+      return;
     }
     InvalidateRect(hwnd, nullptr, FALSE);
   }
@@ -786,6 +862,26 @@ struct ExtensionPages::Impl {
            L" 键/字 · 重复键 " + std::to_wstring(m.value("repeats", 0));
   }
   void Paint(HDC dc) {
+    RECT client{};
+    GetClientRect(hwnd, &client);
+    if (client.right <= 0 || client.bottom <= 0) return;
+    const auto frame = CreateCompatibleDC(dc);
+    const auto bitmap = frame ? CreateCompatibleBitmap(dc, client.right, client.bottom) : nullptr;
+    if (!bitmap) {
+      if (frame) DeleteDC(frame);
+      PaintContent(dc);
+      return;
+    }
+    const auto previous = SelectObject(frame, bitmap);
+    // Publish background, cards and glyphs together; suppressing erase alone
+    // cannot hide the intermediate background from a direct GDI paint.
+    PaintContent(frame);
+    BitBlt(dc, 0, 0, client.right, client.bottom, frame, 0, 0, SRCCOPY);
+    SelectObject(frame, previous);
+    DeleteObject(bitmap);
+    DeleteDC(frame);
+  }
+  void PaintContent(HDC dc) {
     RECT client{};
     GetClientRect(hwnd, &client);
     FillRect(dc, &client, background);
@@ -1057,6 +1153,19 @@ struct ExtensionPages::Impl {
     }
   }
   void Command(int id, int notification) {
+    // RichEdit emits EN_UPDATE while painting. Treating it as an action and
+    // invalidating all children below creates a paint -> EN_UPDATE -> paint
+    // loop even when no text changes. Only actual editor changes publish.
+    if (id == 7003 || id == 7004) {
+      if (id == 7004 && notification == EN_CHANGE)
+        PostMessageW(hwnd, WM_APP + 72, 0, 0);
+      return;
+    }
+    if (id == 7000 || id == 7010) {
+      if (notification != CBN_SELCHANGE) return;
+    } else if (notification != BN_CLICKED) {
+      return;
+    }
     if (id == 7000 && notification == CBN_SELCHANGE) {
       ResetArticle();
       article =
@@ -1069,8 +1178,6 @@ struct ExtensionPages::Impl {
       }
       Build();
     }
-    if (id == 7004 && notification == EN_CHANGE)
-      PostMessageW(hwnd, WM_APP + 72, 0, 0);
     if (id == 7001) {
       Start();
       Refresh();
@@ -1355,10 +1462,17 @@ struct ExtensionPages::Impl {
           next -= GET_WHEEL_DELTA_WPARAM(w) / WHEEL_DELTA * 70;
         else {
           SCROLLINFO s{sizeof(s), SIF_TRACKPOS};
-          GetScrollInfo(h, SB_VERT, &s);
+          GetScrollInfo(self->scrollbar, SB_CTL, &s);
           switch (LOWORD(w)) {
             case SB_THUMBTRACK:
+            case SB_THUMBPOSITION:
               next = s.nTrackPos;
+              break;
+            case SB_TOP:
+              next = 0;
+              break;
+            case SB_BOTTOM:
+              next = self->total - self->height;
               break;
             case SB_LINEUP:
               next -= 32;

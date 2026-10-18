@@ -13,9 +13,10 @@ struct Failure : std::runtime_error {
     explicit Failure(Error value) : std::runtime_error("Invalid AI response"), code(value) {}
 };
 inline constexpr std::size_t kWireLimit = 1024 * 1024, kLineLimit = 512 * 1024, kTextLimit = 256 * 1024;
-std::string RequestBody(std::string_view model, std::string_view source, std::string_view system_prompt);
+std::string RequestBody(std::string_view model, std::string_view source, std::string_view system_prompt,
+                        std::size_t maximum_source = kTextLimit);
 std::vector<std::string> LogicalBlocks(std::string_view text);
-std::string Joined(const std::vector<std::string>& blocks);
+std::string Joined(const std::vector<std::string>& blocks, std::string_view separator = {});
 
 // Transport-independent SSE codec. Input fragments may split UTF-8 or CRLF;
 // only complete events are decoded. No endpoint, credential or target lives here.
@@ -24,7 +25,7 @@ public:
     void Feed(std::string_view bytes);
     void Finish();
     bool Done() const { return done_; }
-    std::string Preview() const;
+    std::string Preview(std::string_view separator = {}) const;
     std::vector<std::string> Blocks() const { return LogicalBlocks(text_); }
 private:
     void Line();

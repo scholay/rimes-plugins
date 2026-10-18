@@ -13,3 +13,9 @@
 The additional native macOS, iOS, Android and shared Swift files in source-map.json were imported from the RIMES 1.1.0 integration branch based on main 29dfecc9764a31f648976de41acd7fed82d2f554. Host services and user stores remain in RIMES. The source map records the exact maintained files; all retain historical MIT attribution where applicable.
 
 The music plugin carries Black Pearl 4 LV2 SoundFont by Glen MacArthur and Robin Gareus / AVL Drumkits. Its CC-BY-SA-3.0 terms with the musical-works exception, source links, digest and unmodified-file provenance are included beside the resource in native/macos/Resources/Music/AVL-README.txt and provenance.json. These resources retain their own terms; they are not relicensed as Apache-2.0.
+
+## Swift collection diff ordering
+
+The linear-space Myers edit decomposition in `native/shared/typing-practice/typing_practice_core.cpp` is adapted from the Swift standard library `Diffing.swift`, copyright 2015–2019 Apple Inc. and the Swift project authors. It preserves native attempt classification for repeated graphemes. Licensed under Apache License 2.0 with Runtime Library Exception; see `LICENSES/Swift-Apache-2.0.txt`.
+
+Source: https://github.com/swiftlang/swift/blob/453277eb74bf700b9558dabd8261a264ee7e4f2e/stdlib/public/core/Diffing.swift

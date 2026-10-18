@@ -14,6 +14,10 @@
     "macos": {
       "legacyID": "builtin.mailbox.chat",
       "distribution": "bundled"
+    },
+    "linux": {
+      "legacyID": "builtin.mailbox.chat",
+      "distribution": "bundled"
     }
   },
   "capabilities": [

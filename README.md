@@ -5,15 +5,17 @@
 
 RIMES 官方免费开源插件仓库。
 
-核心维护者：[学术海](https://pm.scholay.com) · 本体项目：[RIMES](https://github.com/scholay/rimes)
+核心维护者：[学术海](https://pm.scholay.com) · 本体项目：[XSIME](https://github.com/scholay/xsime)
 
 RIMES 的中文输入能力基于 [Rime 输入法引擎（librime）](https://github.com/rime/librime)。插件与引擎的实际依赖关系，以各插件说明为准。
 
 ## 当前状态
 
-正在进行 RIMES 1.1.0 的插件拆分。Polisher / LaTeX 已有处理内容包、原生源码导入记录和确定性打包工具，宿主接入与四平台验收仍在进行。候选包尚不是正式发行版。
+当前发布目标为 1.1.6，与 XSIME 本体一同收敛原生适配和插件内容。正式包、版本目录及校验值以 [Releases](https://github.com/scholay/rimes-plugins/releases) 为准；CI 候选产物通过检查后再公开发布，已发布的版本文件保持不变。
 
 原生适配在本体构建时固定版本导入，随宿主签名；运行时下载包提供宿主解释的处理内容。完整约定见 [插件协议](SPECIFICATION.md)。
+
+Windows 的“打字测速”和“统计”已提供与 macOS 相同插件身份的原生适配，源码位于 `native/windows/metrics*`，由 `source-map.json` 固定导入。文章素材以 macOS 八篇原文为准；修改后运行 `python scripts/generate_windows_articles.py`，使用 `--check` 验证两端一致。插件启停、数据存储与隐私事件边界仍由宿主管理。
 
 ## 目录
 
@@ -40,4 +42,4 @@ python3 scripts/packages.py
 
 我们欢迎复用、改进与再创作，并倡议衍生版本注明 Rime、RIMES、所使用的官方插件和修改者之间的实际关系。具体展示位置与推荐文案属于倡议，不增加 Apache-2.0 之外的许可条件。
 
-Official free and open-source plugins for RIMES, maintained by [学术海](https://pm.scholay.com). The 1.1.0 migration is in progress; candidate packages are not a production release. Original repository material is licensed under Apache-2.0, with third-party terms preserved where applicable.
+Official free and open-source plugins for the RIMES architecture, maintained by [学术海](https://pm.scholay.com). The current release target is 1.1.6 alongside XSIME; verified production packages are published in Releases, separately from CI candidates. Original repository material is licensed under Apache-2.0, with third-party terms preserved where applicable.

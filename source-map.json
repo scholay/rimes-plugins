@@ -473,8 +473,35 @@
       "plugins": [
         "builtin.openai-compatible",
         "builtin.apple-translation",
-        "builtin.fly-chord-learning"
+        "builtin.fly-chord-learning",
+        "builtin.statistics",
+        "builtin.typing-speed"
       ]
+    },
+    {
+      "source": "native/windows/metrics.hpp",
+      "destination": "platforms/windows/native/src/workbench/metrics.hpp",
+      "plugins": ["builtin.statistics", "builtin.typing-speed"]
+    },
+    {
+      "source": "native/windows/metrics.cpp",
+      "destination": "platforms/windows/native/src/workbench/metrics.cpp",
+      "plugins": ["builtin.statistics", "builtin.typing-speed"]
+    },
+    {
+      "source": "native/windows/metrics_articles.cpp",
+      "destination": "platforms/windows/native/src/workbench/metrics_articles.cpp",
+      "plugins": ["builtin.typing-speed"]
+    },
+    {
+      "source": "native/windows/metrics_ui.hpp",
+      "destination": "platforms/windows/native/src/workbench/metrics_ui.hpp",
+      "plugins": ["builtin.statistics", "builtin.typing-speed"]
+    },
+    {
+      "source": "native/windows/metrics_ui.cpp",
+      "destination": "platforms/windows/native/src/workbench/metrics_ui.cpp",
+      "plugins": ["builtin.statistics", "builtin.typing-speed"]
     },
     {
       "source": "native/windows/my_combo.schema.yaml",
@@ -565,6 +592,48 @@
       "destination": "platforms/linux/ai/chat_codec_tests.cpp",
       "plugins": [
         "builtin.openai-compatible"
+      ]
+    },
+    {
+      "source": "native/shared/chord/chord_core.hpp",
+      "destination": "platforms/linux/chord/core/chord_core.hpp",
+      "plugins": [
+        "builtin.fly-chord-learning"
+      ]
+    },
+    {
+      "source": "native/shared/chord/chord_core.cpp",
+      "destination": "platforms/linux/chord/core/chord_core.cpp",
+      "plugins": [
+        "builtin.fly-chord-learning"
+      ]
+    },
+    {
+      "source": "native/shared/statistics/metrics_core.hpp",
+      "destination": "platforms/linux/statistics/core/metrics_core.hpp",
+      "plugins": [
+        "builtin.statistics"
+      ]
+    },
+    {
+      "source": "native/shared/statistics/metrics_core.cpp",
+      "destination": "platforms/linux/statistics/core/metrics_core.cpp",
+      "plugins": [
+        "builtin.statistics"
+      ]
+    },
+    {
+      "source": "native/shared/typing-practice/typing_practice_core.hpp",
+      "destination": "platforms/linux/typing-practice/core/typing_practice_core.hpp",
+      "plugins": [
+        "builtin.typing-speed"
+      ]
+    },
+    {
+      "source": "native/shared/typing-practice/typing_practice_core.cpp",
+      "destination": "platforms/linux/typing-practice/core/typing_practice_core.cpp",
+      "plugins": [
+        "builtin.typing-speed"
       ]
     }
   ]

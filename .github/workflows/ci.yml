@@ -29,6 +29,9 @@ jobs:
       - name: Check license and documentation
         run: python3 scripts/check_repository.py
 
+      - name: Verify Windows practice article parity
+        run: python3 scripts/generate_windows_articles.py --check
+
       - name: Check commit whitespace
         run: git show --format= --check HEAD
 

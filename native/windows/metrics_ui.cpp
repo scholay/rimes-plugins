@@ -1,0 +1,1603 @@
+// Copyright 2026 scholay. SPDX-License-Identifier: Apache-2.0
+#include "metrics_ui.hpp"
+
+#include <bcrypt.h>
+#include <commctrl.h>
+#include <imm.h>
+#include <msctf.h>
+#include <richedit.h>
+#include <shellapi.h>
+
+#include <algorithm>
+#include <array>
+#include <cmath>
+#include <iomanip>
+#include <random>
+#include <set>
+#include <sstream>
+
+#include "../tsf/Guids.h"
+#include "../ui/settings_paint.hpp"
+
+namespace rimes::windows::workbench {
+using metrics::Json;
+namespace {
+std::wstring Text(HWND h) {
+  std::wstring s(GetWindowTextLengthW(h) + 1, L'\0');
+  GetWindowTextW(h, s.data(), static_cast<int>(s.size()));
+  s.resize(wcslen(s.c_str()));
+  return s;
+}
+std::wstring Number(double n, int digits = 1) {
+  std::wostringstream out;
+  out << std::fixed << std::setprecision(digits) << n;
+  return out.str();
+}
+std::wstring Percent(const Json& n) {
+  return n.is_number() ? Number(n.get<double>() * 100) + L"%" : L"—";
+}
+std::wstring Duration(double seconds) {
+  const int s = static_cast<int>(seconds);
+  wchar_t b[40];
+  swprintf_s(b, L"%02d:%02d", s / 60, s % 60);
+  return b;
+}
+std::string Guid(const GUID& g) {
+  wchar_t text[40]{};
+  StringFromGUID2(g, text, 40);
+  return Utf8(text);
+}
+std::string Hash(const std::string& bytes) {
+  std::array<unsigned char, 32> digest{};
+  BCryptHash(BCRYPT_SHA256_ALG_HANDLE, nullptr, 0,
+             reinterpret_cast<PUCHAR>(const_cast<char*>(bytes.data())),
+             static_cast<ULONG>(bytes.size()), digest.data(), 32);
+  std::string text;
+  for (auto b : digest) {
+    text += "0123456789abcdef"[b >> 4];
+    text += "0123456789abcdef"[b & 15];
+  }
+  return text;
+}
+std::pair<std::string, bool> InputSource() {
+  ITfInputProcessorProfileMgr* manager = nullptr;
+  TF_INPUTPROCESSORPROFILE p{};
+  if (SUCCEEDED(CoCreateInstance(CLSID_TF_InputProcessorProfiles, nullptr,
+                                 CLSCTX_INPROC_SERVER,
+                                 IID_PPV_ARGS(&manager)))) {
+    const auto result = manager->GetActiveProfile(GUID_TFCAT_TIP_KEYBOARD, &p);
+    manager->Release();
+    if (SUCCEEDED(result))
+      return {Guid(p.clsid) + ":" + Guid(p.guidProfile) + ":" +
+                  std::to_string(p.langid) + ":" +
+                  std::to_string(reinterpret_cast<UINT_PTR>(p.hkl)),
+              IsEqualGUID(p.clsid, tsf::kTextServiceClsid) != 0};
+  }
+  return {"keyboard:" +
+              std::to_string(reinterpret_cast<UINT_PTR>(GetKeyboardLayout(0))),
+          false};
+}
+bool Composing(HWND editor) {
+  bool active = false;
+  ITfThreadMgr* manager = nullptr;
+  if (SUCCEEDED(CoCreateInstance(CLSID_TF_ThreadMgr, nullptr,
+                                 CLSCTX_INPROC_SERVER,
+                                 IID_PPV_ARGS(&manager)))) {
+    ITfDocumentMgr* doc = nullptr;
+    ITfContext* context = nullptr;
+    ITfContextComposition* compositions = nullptr;
+    IEnumITfCompositionView* enumeration = nullptr;
+    ITfCompositionView* view = nullptr;
+    if (SUCCEEDED(manager->GetFocus(&doc)) && doc &&
+        SUCCEEDED(doc->GetTop(&context)) && context &&
+        SUCCEEDED(context->QueryInterface(IID_PPV_ARGS(&compositions))) &&
+        SUCCEEDED(compositions->EnumCompositions(&enumeration)))
+      active = enumeration->Next(1, &view, nullptr) == S_OK;
+    if (view) view->Release();
+    if (enumeration) enumeration->Release();
+    if (compositions) compositions->Release();
+    if (context) context->Release();
+    if (doc) doc->Release();
+    manager->Release();
+  }
+  if (const auto context = ImmGetContext(editor)) {
+    active = active ||
+             ImmGetCompositionStringW(context, GCS_COMPSTR, nullptr, 0) > 0;
+    ImmReleaseContext(editor, context);
+  }
+  return active;
+}
+const wchar_t* Kind(const std::string& kind) {
+  return kind == "extension" ? L"内置扩展"
+         : kind == "capsule" ? L"Capsule 插件"
+         : kind == "mailbox" ? L"Mailbox 插件"
+                             : L"缓冲插件";
+}
+std::wstring Description(const std::string& id) {
+  if (id == "builtin.typing-speed")
+    return L"文章跟打、实时速度与准确率，以及按方案分组的本机成绩。";
+  if (id == "builtin.statistics")
+    return L"按键分布、输入趋势与历史日历；仅记录本机汇总，不保存正文。";
+  if (id == "builtin.fly-chord-learning")
+    return L"并击输入、键位配置与实时预览。";
+  if (id == "builtin.apple-translation")
+    return L"在 Buffer 中实时翻译，支持本地翻译与 AI 连接器。";
+  if (id == "builtin.codex-cli")
+    return L"通过 Codex CLI 连接 Buffer 的 AI 功能。";
+  if (id == "builtin.openai-compatible")
+    return L"通过 OpenAI 兼容接口连接 Buffer 的 AI 功能。";
+  if (id.ends_with("temporary")) return L"可开启剪贴板历史，收录文字、图片和文件；支持搜索、复制与收藏。";
+  if (id.ends_with("capture")) return L"Alt+Shift+4 框选截图、左下角堆栈、图片复制与再次编辑。录屏、OCR、多图拼接尚未实现。";
+  if (id.ends_with("notes")) return L"在本机保存、编辑与查找笔记。";
+  if (id.ends_with("resources")) return L"保存和打开本机资源路径；文献引用排版尚未实现。";
+  if (id.ends_with("passwords")) return L"加密保存、四组物理并击验证、查看与复制；结构化字段和 TOTP 尚未实现。";
+  if (id.ends_with("terminal")) return L"管理持续运行的终端会话。";
+  if (id.ends_with("chat")) return L"独立 AI 对话与完整消息记录。";
+  return L"集中查看收件与消息内容。";
+}
+}  // namespace
+
+struct ExtensionPages::Impl {
+  HWND hwnd = nullptr, parent = nullptr, editor = nullptr, target = nullptr, scrollbar = nullptr;
+  ExtensionCallbacks cb;
+  std::shared_ptr<metrics::Service> service;
+  ui::SettingsPage page = ui::SettingsPage::kInput;
+  int sub = 0, scroll = 0, total = 0, width = 650, height = 480, article = 0,
+      range = 7, metric = 0;
+  unsigned dpi = 96;
+  ui::ThemeId theme = ui::ThemeId::kNight;
+  ui::SettingsFonts fonts;
+  HFONT editor_font = nullptr;
+  HBRUSH background = nullptr, surface = nullptr;
+  std::map<int, HWND> controls;
+  std::map<int, ui::DipRect> positions;
+  std::vector<PluginView> plugins;
+  std::vector<std::pair<ui::DipRect, std::size_t>> cards;
+  std::vector<std::pair<int, std::wstring>> sections;
+  std::vector<Json> results;
+  std::vector<std::string> comparisons;
+  std::vector<std::pair<ui::DipRect, std::string>> dates;
+  std::vector<int> years;
+  std::string selected_day = metrics::Day(metrics::Wall()), source, comparison;
+  std::uint64_t revision = 0;
+  std::wstring status = L"选择文章后开始跟打", message;
+  bool suppress = false, visible = false, stopping = false, was_armed = false;
+  Json last_states;
+  Json last_practice;
+  std::wstring last_practice_status;
+  int Px(double v) const { return static_cast<int>(std::lround(v * dpi / 96)); }
+  RECT Rect(ui::DipRect r) const {
+    return {Px(r.left), Px(r.top - scroll), Px(r.right), Px(r.bottom - scroll)};
+  }
+  const ui::ThemePalette& Palette() const { return ui::Palette(theme); }
+  explicit Impl(HWND owner, ExtensionCallbacks callbacks)
+      : parent(owner), cb(std::move(callbacks)), service(cb.metrics) {
+    if (!service) throw std::runtime_error("Extension metrics service missing");
+    LoadLibraryW(L"Msftedit.dll");
+    INITCOMMONCONTROLSEX init{sizeof(init), ICC_DATE_CLASSES};
+    InitCommonControlsEx(&init);
+    WNDCLASSW wc{};
+    wc.hInstance = GetModuleHandleW(nullptr);
+    wc.lpfnWndProc = Proc;
+    wc.lpszClassName = L"Rimes.ExtensionPages";
+    wc.hCursor = LoadCursorW(nullptr, IDC_ARROW);
+    RegisterClassW(&wc);
+    hwnd =
+        CreateWindowExW(WS_EX_CONTROLPARENT, wc.lpszClassName, L"内置插件内容",
+                        WS_CHILD | WS_CLIPCHILDREN, 0, 0, 1, 1,
+                        parent, nullptr, wc.hInstance, this);
+    // Retain native scrollbar dragging, keyboard control and accessibility,
+    // but draw a narrow theme-aware client control instead of the system gutter.
+    scrollbar = CreateWindowExW(0, L"SCROLLBAR", L"页面滚动",
+        WS_CHILD | WS_TABSTOP | SBS_VERT, 0, 0, 1, 1, hwnd,
+        reinterpret_cast<HMENU>(7200), wc.hInstance, nullptr);
+    SetWindowSubclass(scrollbar, ScrollbarProc, 1, reinterpret_cast<DWORD_PTR>(this));
+    SetTimer(hwnd, 1, 200, nullptr);
+  }
+  ~Impl() {
+    Stop("interrupted");
+    service->ForgetEditor(editor);
+    if (IsWindow(hwnd)) DestroyWindow(hwnd);
+    fonts.Release();
+    if (editor_font) DeleteObject(editor_font);
+    if (background) DeleteObject(background);
+    if (surface) DeleteObject(surface);
+  }
+  HWND Make(int id, const wchar_t* cls, const wchar_t* text, DWORD style = 0) {
+    if (controls.contains(id)) return controls[id];
+    auto h =
+        CreateWindowExW(0, cls, text, WS_CHILD | WS_TABSTOP | style, 0, 0, 1, 1,
+                        hwnd, reinterpret_cast<HMENU>(static_cast<INT_PTR>(id)),
+                        GetModuleHandleW(nullptr), nullptr);
+    controls[id] = h;
+    SetWindowSubclass(h, FocusProc, 2, reinterpret_cast<DWORD_PTR>(this));
+    SendMessageW(h, WM_SETFONT, reinterpret_cast<WPARAM>(fonts.body), FALSE);
+    return h;
+  }
+  HWND Button(int id, const wchar_t* text) {
+    return Make(id, L"BUTTON", text, BS_OWNERDRAW);
+  }
+  HWND Combo(int id) {
+    auto h = Make(id, L"COMBOBOX", L"", CBS_DROPDOWNLIST | WS_VSCROLL);
+    SetWindowSubclass(h, ComboProc, 1, reinterpret_cast<DWORD_PTR>(this));
+    return h;
+  }
+  bool PracticePage() const {
+    return page == ui::SettingsPage::kTyping ||
+           (page == ui::SettingsPage::kStatistics && sub == 2);
+  }
+  void Put(int id, float x, float y, float w, float h) {
+    positions[id] = {x, y, x + w, y + h};
+  }
+  void ShowControls() {
+    for (auto [id, h] : controls) {
+      if (!positions.contains(id)) {
+        ShowWindow(h, SW_HIDE);
+        continue;
+      }
+      auto r = Rect(positions[id]);
+      SetWindowPos(h, nullptr, r.left, r.top, r.right - r.left,
+                   r.bottom - r.top,
+                   SWP_NOACTIVATE | SWP_NOZORDER | SWP_SHOWWINDOW);
+    }
+    SCROLLINFO info{sizeof(info), SIF_RANGE | SIF_PAGE | SIF_POS};
+    info.nMax = (std::max)(0, total - 1);
+    info.nPage = height;
+    info.nPos = scroll;
+    SetScrollInfo(scrollbar, SB_CTL, &info, TRUE);
+    SetWindowPos(scrollbar, nullptr, Px(width - 12), 0, Px(12), Px(height),
+                 SWP_NOACTIVATE | SWP_NOZORDER);
+    ShowWindow(scrollbar, total > height ? SW_SHOWNA : SW_HIDE);
+    InvalidateRect(scrollbar, nullptr, FALSE);
+  }
+  static LRESULT CALLBACK ScrollbarProc(HWND h, UINT msg, WPARAM w, LPARAM l,
+                                        UINT_PTR id, DWORD_PTR ref) {
+    auto* self = reinterpret_cast<Impl*>(ref);
+    if (msg == WM_NCDESTROY) RemoveWindowSubclass(h, ScrollbarProc, id);
+    if (msg == WM_ERASEBKGND) return 1;
+    if (msg == WM_PAINT || msg == WM_PRINTCLIENT || msg == WM_PRINT) {
+      PAINTSTRUCT paint{};
+      auto dc = msg == WM_PAINT ? BeginPaint(h, &paint) : reinterpret_cast<HDC>(w);
+      RECT r{}; GetClientRect(h, &r);
+      const auto& p = self->Palette();
+      ui::FillRectColor(dc, r, ui::ToColorRef(p.settings_background));
+      SCROLLBARINFO bar{sizeof(bar)};
+      if (GetScrollBarInfo(h, OBJID_CLIENT, &bar)) {
+        const bool pressed = (bar.rgstate[3] & STATE_SYSTEM_PRESSED) != 0;
+        POINT mouse{}; GetCursorPos(&mouse); ScreenToClient(h, &mouse);
+        const bool hover = PtInRect(&r, mouse) != FALSE;
+        const int thumb_width = self->Px(hover || pressed ? 7 : 5);
+        RECT thumb{(r.right - thumb_width) / 2, bar.xyThumbTop,
+                   (r.right + thumb_width) / 2, bar.xyThumbBottom};
+        if (thumb.bottom > thumb.top)
+          ui::FillRoundRect(dc, thumb, self->Px(3), ui::ToColorRef(
+              pressed ? p.text_secondary : ui::Blend(p.settings_background, p.text_secondary, hover ? .65f : .45f)));
+        // Keep the native arrow hit areas visible; no bevels or white boxes.
+        const auto pen = CreatePen(PS_SOLID, (std::max)(1, self->Px(1)), ui::ToColorRef(p.text_muted));
+        const auto old = SelectObject(dc, pen);
+        for (int direction : {-1, 1}) {
+          const int cy = direction < 0 ? bar.dxyLineButton / 2 : r.bottom - bar.dxyLineButton / 2;
+          const int cx = r.right / 2, span = self->Px(2);
+          MoveToEx(dc, cx - span, cy - direction * span / 2, nullptr);
+          LineTo(dc, cx, cy + direction * span / 2);
+          LineTo(dc, cx + span, cy - direction * span / 2);
+        }
+        SelectObject(dc, old); DeleteObject(pen);
+      }
+      if (msg == WM_PAINT) EndPaint(h, &paint);
+      return 0;
+    }
+    if (msg == WM_MOUSEMOVE) {
+      TRACKMOUSEEVENT track{sizeof(track), TME_LEAVE, h, 0};
+      TrackMouseEvent(&track);
+    }
+    const auto result = DefSubclassProc(h, msg, w, l);
+    if (msg == WM_MOUSEMOVE || msg == WM_MOUSELEAVE || msg == WM_LBUTTONUP || msg == WM_ENABLE)
+      InvalidateRect(h, nullptr, FALSE);
+    return result;
+  }
+  void Reveal(HWND control) {
+    const int id = GetDlgCtrlID(control);
+    if (!positions.contains(id)) return;
+    const auto r = positions[id];
+    const float bottom = (id == 7000 || id == 7010) ? r.top + 30 : r.bottom;
+    if (bottom > scroll + height)
+      scroll = static_cast<int>(bottom) - height + 12;
+    if (r.top < scroll) scroll = static_cast<int>(r.top);
+    scroll = (std::clamp)(scroll, 0, (std::max)(0, total - height));
+    ShowControls();
+    InvalidateRect(hwnd, nullptr, FALSE);
+  }
+  static LRESULT CALLBACK FocusProc(HWND h, UINT msg, WPARAM w, LPARAM l,
+                                    UINT_PTR id, DWORD_PTR ref) {
+    auto* self = reinterpret_cast<Impl*>(ref);
+    if (msg == WM_NCDESTROY) RemoveWindowSubclass(h, FocusProc, id);
+    if (msg == WM_SETFOCUS) self->Reveal(h);
+    return DefSubclassProc(h, msg, w, l);
+  }
+  void Colors() {
+    fonts.Ensure(dpi);
+    if (background) DeleteObject(background);
+    if (surface) DeleteObject(surface);
+    background =
+        CreateSolidBrush(ui::ToColorRef(Palette().settings_background));
+    surface = CreateSolidBrush(ui::ToColorRef(Palette().surface));
+    if (editor_font) DeleteObject(editor_font);
+    editor_font =
+        CreateFontW(-Px(18), 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE,
+                    DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
+                    CLEARTYPE_QUALITY, DEFAULT_PITCH, L"Segoe UI");
+    for (auto [id, h] : controls)
+      SendMessageW(h, WM_SETFONT,
+                   reinterpret_cast<WPARAM>(
+                       id == 7003 || id == 7004 ? editor_font : fonts.body),
+                   FALSE);
+    for (auto h : {editor, target})
+      if (h) {
+        SendMessageW(h, EM_SETBKGNDCOLOR, 0, ui::ToColorRef(Palette().surface));
+        CHARFORMAT2W f{};
+        f.cbSize = sizeof(f);
+        f.dwMask = CFM_COLOR | CFM_UNDERLINE;
+        f.crTextColor = ui::ToColorRef(Palette().text_primary);
+        SendMessageW(h, EM_SETCHARFORMAT, SCF_ALL,
+                     reinterpret_cast<LPARAM>(&f));
+      }
+    last_states = Json();
+  }
+  void Build() {
+    positions.clear();
+    cards.clear();
+    sections.clear();
+    dates.clear();
+    const float w = static_cast<float>(width - 18);
+    if (page == ui::SettingsPage::kPlugins) {
+      Gallery();
+    } else if (PracticePage()) {
+      auto picker = Combo(7000);
+      if (SendMessageW(picker, CB_GETCOUNT, 0, 0) == 0)
+        for (const auto& a : metrics::Articles())
+          SendMessageW(picker, CB_ADDSTRING, 0,
+                       reinterpret_cast<LPARAM>(Wide(a.title).c_str()));
+      SendMessageW(picker, CB_SETCURSEL, article, 0);
+      Put(7000, 0, 0, w - 250, 300);
+      if (!sub) {
+        Button(7001, L"开始跟打");
+        Button(7002, L"结束");
+        Button(7005, L"随机");
+        Put(7005, w - 240, 0, 60, 30);
+        Put(7001, w - 170, 0, 100, 30);
+        Put(7002, w - 60, 0, 60, 30);
+        target = Make(7003, MSFTEDIT_CLASS, L"",
+                      ES_MULTILINE | ES_READONLY | WS_VSCROLL);
+        editor =
+            Make(7004, MSFTEDIT_CLASS, L"",
+                 ES_MULTILINE | ES_WANTRETURN | ES_NOOLEDRAGDROP | WS_VSCROLL);
+        SendMessageW(editor, EM_SETEVENTMASK, 0, ENM_CHANGE | ENM_SELCHANGE);
+        SendMessageW(editor, EM_EXLIMITTEXT, 0, 16384);
+        SendMessageW(editor, EM_SETUNDOLIMIT, 0, 0);
+        SendMessageW(editor, EM_SETREADONLY, !service->Armed(), 0);
+        EnableWindow(controls[7002], service->Armed());
+        DragAcceptFiles(editor, FALSE);
+        SetWindowSubclass(editor, EditorProc, 1,
+                          reinterpret_cast<DWORD_PTR>(this));
+        Put(7003, 0, 200, w, 160);
+        Put(7004, 0, 388, w, 130);
+        RECT inset{Px(12), Px(10), Px(w - 28), Px(118)};
+        SendMessageW(editor, EM_SETRECT, 0, reinterpret_cast<LPARAM>(&inset));
+        total = 930;
+        suppress = true;
+        SetWindowTextW(target, Wide(metrics::Articles()[article].text).c_str());
+        suppress = false;
+      } else {
+        auto contexts = Combo(7010);
+        Put(7010, 0, 44, w, 250);
+        Button(7011, L"清空成绩…");
+        Put(7011, w - 120, 0, 120, 30);
+        PopulateHistory(contexts);
+        total = 500 + static_cast<int>(results.size()) * 66;
+      }
+    } else {
+      Button(7100, L"7 天");
+      Button(7101, L"30 天");
+      Button(7102, L"成文字数");
+      Button(7103, L"日常速度");
+      Put(7100, 0, 0, 65, 28);
+      Put(7101, 70, 0, 65, 28);
+      Put(7102, 150, 0, 100, 28);
+      Put(7103, 255, 0, 100, 28);
+      auto date =
+          Make(7104, DATETIMEPICK_CLASSW, L"选择统计日期", DTS_SHORTDATEFORMAT);
+      SetWindowSubclass(date, ComboProc, 1, reinterpret_cast<DWORD_PTR>(this));
+      SendMessageW(date, DTM_SETFORMATW, 0,
+                   reinterpret_cast<LPARAM>(L"yyyy-MM-dd"));
+      Put(7104, w - 170, 0, 170, 28);
+      SYSTEMTIME limits[2]{};
+      GetLocalTime(&limits[1]);
+      SendMessageW(date, DTM_SETRANGE, GDTR_MAX,
+                   reinterpret_cast<LPARAM>(limits));
+
+      Button(7110, L"按键分布");
+      Button(7111, L"输入趋势");
+      Button(7112, L"清空输入趋势…");
+      Button(7113, sub ? L"清空键频历史…" : L"清空当天键频…");
+      years.clear();
+      const auto data = service->Data();
+      std::set<int, std::greater<int>> recordedYears;
+      recordedYears.insert(
+          std::stoi(metrics::Day(metrics::Wall()).substr(0, 4)));
+      for (const auto& [day, value] : data["days"].items()) {
+        (void)value;
+        recordedYears.insert(std::stoi(day.substr(0, 4)));
+      }
+      years.assign(recordedYears.begin(), recordedYears.end());
+      const float bottom =
+          sub ? 1080.0f + static_cast<float>(years.size() - 1) * 150 : 650.0f;
+      Put(7110, 0, bottom, 110, 30);
+      Put(7111, 118, bottom, 110, 30);
+      Put(7112, w - 320, bottom, 150, 30);
+      Put(7113, w - 160, bottom, 160, 30);
+      total = static_cast<int>(bottom + 115);
+    }
+    Button(7200, L"备份并重建…");
+    if (!service->Issue().empty()) {
+      Put(7200, 0, static_cast<float>(total), 150, 30);
+      total += 85;
+    }
+    scroll = (std::clamp)(scroll, 0, (std::max)(0, total - height));
+    ShowControls();
+    Colors();
+    last_practice = Json();
+    last_practice_status.clear();
+    InvalidateRect(hwnd, nullptr, FALSE);
+  }
+  void PopulateHistory(HWND contexts) {
+    const auto data = service->Data();
+    const auto& a = metrics::Articles()[article];
+    auto old = comparison;
+    comparisons.clear();
+    SendMessageW(contexts, CB_RESETCONTENT, 0, 0);
+    for (const auto& r : data["results"])
+      if (r["articleID"] == a.id) {
+        const auto key = r["context"].value("comparison", "");
+        if (std::find(comparisons.begin(), comparisons.end(), key) ==
+            comparisons.end()) {
+          comparisons.push_back(key);
+          const auto title = Wide(r["context"].value("schema", "未知输入源")) +
+                             L" · 文章 v" +
+                             std::to_wstring(r.value("articleVersion", 1)) +
+                             L" · " + Wide(key.substr(0, 8));
+          SendMessageW(contexts, CB_ADDSTRING, 0,
+                       reinterpret_cast<LPARAM>(title.c_str()));
+        }
+      }
+    const auto found = std::find(comparisons.begin(), comparisons.end(), old);
+    auto index = found == comparisons.end()
+                     ? 0
+                     : static_cast<int>(found - comparisons.begin());
+    if (comparisons.empty()) {
+      SendMessageW(contexts, CB_ADDSTRING, 0,
+                   reinterpret_cast<LPARAM>(L"暂无输入方案记录"));
+      comparison.clear();
+    } else
+      comparison = comparisons[index];
+    SendMessageW(contexts, CB_SETCURSEL, index, 0);
+    results.clear();
+    for (auto it = data["results"].rbegin(); it != data["results"].rend(); ++it)
+      if ((*it)["articleID"] == a.id &&
+          (*it)["context"].value("comparison", "") == comparison)
+        results.push_back(*it);
+    for (std::size_t i = 0; i < results.size(); ++i) {
+      Button(7300 + static_cast<int>(i), L"详情");
+      Put(7300 + static_cast<int>(i), static_cast<float>(width - 94),
+          440 + static_cast<float>(i) * 66, 70, 28);
+    }
+  }
+  void Gallery() {
+    plugins = cb.plugins ? cb.plugins() : std::vector<PluginView>{};
+    float y = 0;
+    int index = 0;
+    const float gap = 10, w = static_cast<float>(width - 18),
+                card = (w - 2 * gap) / 3;
+    constexpr const char* order[] = {"mailbox", "capsule", "extension",
+                                     "buffer"};
+    constexpr const char* filters[] = {"", "buffer", "capsule", "mailbox",
+                                       "extension"};
+    for (auto kind : order) {
+      if (sub > 0 && sub < 5 && std::string(kind) != filters[sub]) continue;
+      std::vector<std::size_t> selected;
+      for (std::size_t i = 0; i < plugins.size(); ++i)
+        if (plugins[i].kind == kind) selected.push_back(i);
+      if (selected.empty()) continue;
+      sections.push_back({static_cast<int>(y), Kind(kind)});
+      y += 30;
+      for (auto i : selected) {
+        const auto& p = plugins[i];
+        const int col = index % 3;
+        const float x = col * (card + gap);
+        cards.push_back({{x, y, x + card, y + 128}, i});
+        const int id = 8000 + static_cast<int>(i) * 4;
+        Button(id, p.enabled ? L"停用" : p.installed ? L"启用" : p.can_install ? L"安装" : L"未实现");
+        EnableWindow(controls[id], p.installed || p.can_install);
+        Button(id + 1, L"详情");
+        Button(id + 2, L"设置");
+        EnableWindow(controls[id + 2], p.installed && p.enabled);
+        Button(id + 3, L"卸载…");
+        Put(id, x + card - 63, y + 94, 54, 26);
+        Put(id + 1, x + card - 104, y + 9, 42, 23);
+        Put(id + 2, x + card - 55, y + 9, 46, 23);
+        if (p.installed && p.can_install) Put(id + 3, x + 9, y + 94, 62, 26);
+        if (++index % 3 == 0) y += 138;
+      }
+      if (index % 3) y += 138;
+      index = 0;
+      y += 20;
+    }
+    total = static_cast<int>(y + 60);
+  }
+  void Start() {
+    Stop("interrupted");
+    suppress = true;
+    SetWindowTextW(editor, L"");
+    suppress = false;
+    const auto config = cb.configuration ? cb.configuration() : Settings{};
+    auto input = InputSource();
+    source = input.first;
+    revision = config.revision;
+    Json context = {
+        {"inputSource", source},
+        {"schema", input.second ? config.schema : source},
+        {"chordAvailable",
+         input.second && config.schema == "my_combo" && config.chord_enabled}};
+    context["keymapRevision"] =
+        context["chordAvailable"] == true
+            ? Hash(config.chord_profile.dump() + ":" +
+                   std::to_string(config.chord_interval_ms))
+            : "";
+    context["comparison"] =
+        Hash(context.dump() + ":" +
+             std::to_string(metrics::Articles()[article].version));
+    service->Arm(editor, metrics::Articles()[article], context);
+    SendMessageW(editor, EM_SETREADONLY, FALSE, 0);
+    SetFocus(editor);
+    was_armed = true;
+    status = service->Practice()["context"].value("repeatArticle", false)
+                 ? L"同篇重练 · 从第一个字开始"
+                 : L"首次挑战 · 从第一个字开始";
+    SetWindowTextW(controls[7001], L"重新开始");
+    EnableWindow(controls[7002], TRUE);
+    EnableWindow(controls[7000], FALSE);
+    EnableWindow(controls[7005], FALSE);
+    last_states = Json();
+  }
+  void Stop(const std::string& reason) {
+    if (stopping || !service->Armed()) return;
+    stopping = true;
+    service->Finish(reason);
+    if (editor) SendMessageW(editor, EM_SETREADONLY, TRUE, 0);
+    status = reason.empty()
+                 ? L"本次结束 · 成绩已保存"
+                 : L"本次记为练习 · " +
+                       Wide(reason == "focusLost"              ? "输入区失焦"
+                            : reason == "configurationChanged" ? "方案已改变"
+                            : reason == "inputSourceChanged"   ? "输入源已改变"
+                                                               : "练习中断");
+    stopping = false;
+  }
+  void ResetArticle() {
+    Stop("interrupted");
+    service->ResetPractice();
+    was_armed = false;
+    last_states = Json();
+    status = L"选择文章后开始跟打";
+    suppress = true;
+    if (editor) SetWindowTextW(editor, L"");
+    suppress = false;
+    if (controls.contains(7001)) SetWindowTextW(controls[7001], L"开始跟打");
+    if (controls.contains(7000)) EnableWindow(controls[7000], TRUE);
+    if (controls.contains(7005)) EnableWindow(controls[7005], TRUE);
+  }
+  void Publish() {
+    if (suppress || !editor || !service->Armed()) return;
+    if (Composing(editor)) {
+      service->Composition();
+      return;
+    }
+    const auto text = Text(editor);
+    // A surrogate pair may arrive in two WM_CHAR messages. Wait for the
+    // complete UTF-16 value instead of admitting a replacement character.
+    if (!text.empty() &&
+        !WideCharToMultiByte(CP_UTF8, WC_ERR_INVALID_CHARS, text.data(),
+                             static_cast<int>(text.size()), nullptr, 0, nullptr,
+                             nullptr))
+      return;
+    service->Reconcile(Utf8(text));
+    Refresh();
+  }
+  void Refresh() {
+    if (!visible) return;
+    if (page == ui::SettingsPage::kPlugins && cb.plugins) {
+      auto current = cb.plugins();
+      bool changed = current.size() != plugins.size();
+      for (std::size_t i = 0; !changed && i < current.size(); ++i)
+        changed = current[i].id != plugins[i].id ||
+                  current[i].installed != plugins[i].installed ||
+                  current[i].enabled != plugins[i].enabled;
+      if (changed) {
+        Build();
+        PostMessageW(parent, WM_APP + 73, 0, 0);
+      }
+    }
+    if (page == ui::SettingsPage::kTyping && !sub) {
+      const bool armed = service->Armed();
+      if (armed) {
+        if (InputSource().first != source) {
+          Stop("inputSourceChanged");
+        } else if (cb.configuration && cb.configuration().revision != revision)
+          Stop("configurationChanged");
+      }
+      const auto snapshot = service->Practice();
+      if (!snapshot.is_null() && snapshot.contains("states") &&
+          snapshot["states"] != last_states) {
+        last_states = snapshot["states"];
+        Highlight();
+      }
+      if (was_armed && !service->Armed()) {
+        SendMessageW(editor, EM_SETREADONLY, TRUE, 0);
+        SetWindowTextW(controls[7001], L"同篇重练");
+        EnableWindow(controls[7002], FALSE);
+        EnableWindow(controls[7000], TRUE);
+        EnableWindow(controls[7005], TRUE);
+        if (snapshot.value("finished", false))
+          status =
+              snapshot.value("complete", false) && snapshot["reasons"].empty()
+                  ? L"本次完成 · 成绩已保存"
+                  : L"本次结束 · 已保存为练习";
+        else
+          status = L"尚未输入，不产生空成绩";
+        if (!service->Issue().empty())
+          status = L"成绩未能保存 · " + Wide(service->Issue());
+        was_armed = false;
+      }
+      // A resting practice page has no animation. Timer ticks still check
+      // input-source/configuration changes, but only changed metrics repaint.
+      if (snapshot != last_practice || status != last_practice_status) {
+        last_practice = snapshot;
+        last_practice_status = status;
+        // Keep the article and RichEdit input out of periodic metric updates.
+        // Scrolling/layout changes still invalidate the entire page separately.
+        for (const auto& area : {ui::DipRect{0, 66, static_cast<float>(width - 18), 198},
+                                 ui::DipRect{0, 540, static_cast<float>(width - 18), 850}}) {
+          const auto rect = Rect(area);
+          InvalidateRect(hwnd, &rect, FALSE);
+        }
+      }
+      return;
+    }
+    InvalidateRect(hwnd, nullptr, FALSE);
+  }
+  void Highlight() {
+    if (!target || !last_states.is_array()) return;
+    const auto& articleValue = metrics::Articles()[article];
+    const auto chars = metrics::Characters(articleValue.text);
+    SendMessageW(target, WM_SETREDRAW, FALSE, 0);
+    LONG offset = 0;
+    for (std::size_t i = 0; i < chars.size(); ++i) {
+      CHARRANGE selection{offset, offset + static_cast<LONG>(chars[i].size())};
+      SendMessageW(target, EM_EXSETSEL, 0,
+                   reinterpret_cast<LPARAM>(&selection));
+      CHARFORMAT2W f{};
+      f.cbSize = sizeof(f);
+      f.dwMask = CFM_COLOR | CFM_UNDERLINE;
+      const int state = i < last_states.size() ? last_states[i].get<int>() : 0;
+      f.crTextColor = ui::ToColorRef(state == 1   ? Palette().accent_text
+                                     : state >= 2 ? Palette().danger_text
+                                                  : Palette().text_secondary);
+      f.dwEffects = state == 3 ? CFE_UNDERLINE : 0;
+      SendMessageW(target, EM_SETCHARFORMAT, SCF_SELECTION,
+                   reinterpret_cast<LPARAM>(&f));
+      offset = selection.cpMax;
+    }
+    CHARRANGE end{0, 0};
+    SendMessageW(target, EM_EXSETSEL, 0, reinterpret_cast<LPARAM>(&end));
+    SendMessageW(target, WM_SETREDRAW, TRUE, 0);
+    InvalidateRect(target, nullptr, FALSE);
+  }
+  void Label(HDC dc, const std::wstring& text, ui::DipRect rect, HFONT font,
+             std::uint32_t color,
+             UINT flags = DT_LEFT | DT_WORDBREAK | DT_NOPREFIX) {
+    auto r = Rect(rect);
+    SelectObject(dc, font);
+    SetTextColor(dc, ui::ToColorRef(color));
+    DrawTextW(dc, text.c_str(), -1, &r, flags);
+  }
+  void Box(HDC dc, ui::DipRect rect) {
+    ui::FillRoundRect(dc, Rect(rect), Px(8),
+                      ui::ToColorRef(Palette().surface_secondary));
+    ui::StrokeRoundRect(dc, Rect(rect), Px(8),
+                        ui::ToColorRef(Palette().border));
+  }
+  void MetricCards(HDC dc, float y, const std::array<std::wstring, 4>& titles,
+                   const std::array<std::wstring, 4>& values) {
+    const float w = (width - 18 - 30) / 4.0f;
+    for (int i = 0; i < 4; ++i) {
+      const float x = i * (w + 10);
+      Box(dc, {x, y, x + w, y + 72});
+      Label(dc, titles[i], {x + 12, y + 10, x + w - 8, y + 28}, fonts.family,
+            Palette().text_secondary);
+      Label(dc, values[i], {x + 12, y + 34, x + w - 8, y + 64}, fonts.heading,
+            Palette().text_primary, DT_SINGLELINE | DT_END_ELLIPSIS);
+    }
+  }
+  void Chart(HDC dc, float y, float h,
+             const std::vector<std::optional<double>>& values,
+             const std::wstring& title) {
+    const float w = static_cast<float>(width - 18);
+    Box(dc, {0, y, w, y + h});
+    Label(dc, title, {14, y + 10, w - 14, y + 32}, fonts.body,
+          Palette().text_secondary);
+    double max = 1;
+    for (const auto& n : values)
+      if (n) max = (std::max)(max, *n);
+    bool any = false;
+    auto pen = CreatePen(PS_SOLID, Px(2), ui::ToColorRef(Palette().accent));
+    auto old = SelectObject(dc, pen);
+    for (std::size_t i = 0; i < values.size(); ++i) {
+      if (!values[i]) {
+        any = false;
+        continue;
+      }
+      const auto x = Px(18 + (w - 36) * (values.size() > 1
+                                             ? static_cast<float>(i) /
+                                                   (values.size() - 1)
+                                             : 0.5f)),
+                 v = Px(y + h - 26 -
+                        static_cast<float>(*values[i] / max) * (h - 70) -
+                        scroll);
+      if (any)
+        LineTo(dc, x, v);
+      else
+        MoveToEx(dc, x, v, nullptr);
+      Ellipse(dc, x - Px(2), v - Px(2), x + Px(2), v + Px(2));
+      any = true;
+    }
+    SelectObject(dc, old);
+    DeleteObject(pen);
+    if (values.empty() ||
+        std::none_of(values.begin(), values.end(),
+                     [](const auto& v) { return v.has_value(); }))
+      Label(dc, L"暂无记录", {0, y + 50, w, y + h - 12}, fonts.body,
+            Palette().text_muted, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+    Label(dc, L"0", {10, y + h - 22, 50, y + h - 4}, fonts.family,
+          Palette().text_muted);
+    Label(dc, Number(max, 0), {w - 65, y + 12, w - 12, y + 32}, fonts.family,
+          Palette().text_muted, DT_RIGHT | DT_SINGLELINE);
+  }
+  void Keyboard(HDC dc, float y, const Json& counts) {
+    const std::vector<std::vector<unsigned>> keys = {
+        {'1', '2', '3', '4', '5', '6', '7', '8', '9', '0', VK_OEM_MINUS,
+         VK_OEM_PLUS, VK_BACK},
+        {'Q', 'W', 'E', 'R', 'T', 'Y', 'U', 'I', 'O', 'P', VK_OEM_4, VK_OEM_6,
+         VK_OEM_5},
+        {'A', 'S', 'D', 'F', 'G', 'H', 'J', 'K', 'L', VK_OEM_1, VK_OEM_7,
+         VK_RETURN},
+        {'Z', 'X', 'C', 'V', 'B', 'N', 'M', VK_OEM_COMMA, VK_OEM_PERIOD,
+         VK_OEM_2},
+        {VK_SHIFT, VK_CONTROL, VK_MENU, VK_SPACE}};
+    unsigned maximum = 1, totalKeys = 0;
+    std::string top;
+    for (const auto& [key, count] : counts.items())
+      if (count.is_number_unsigned() || count.is_number_integer()) {
+        const auto value = count.get<unsigned>();
+        totalKeys += value;
+        if (value >= maximum) {
+          maximum = value;
+          top = key;
+        }
+      }
+    Label(dc, L"键盘分布 · " + std::to_wstring(totalKeys) + L" 次",
+          {0, y, static_cast<float>(width - 18), y + 24}, fonts.body,
+          Palette().text_primary);
+    const float cell = (width - 18 - 12 * 4) / 13.0f;
+    for (std::size_t row = 0; row < keys.size(); ++row) {
+      float x = static_cast<float>(row == 2   ? cell * .3
+                                   : row == 3 ? cell * .8
+                                              : 0);
+      for (auto key : keys[row]) {
+        const float size = key == VK_SPACE ? cell * 6 : cell;
+        const auto n = counts.value(std::to_string(key), 0U);
+        ui::DipRect box{x, y + 32 + row * 38, x + size, y + 66 + row * 38};
+        ui::FillRoundRect(dc, Rect(box), Px(5),
+                          ui::ToColorRef(ui::Blend(
+                              Palette().surface_secondary, Palette().accent,
+                              n ? 0.18f + 0.65f * n / maximum : 0.0f)));
+        std::wstring name = key >= L'0' && key <= L'Z'
+                                ? std::wstring(1, static_cast<wchar_t>(key))
+                            : key == VK_BACK       ? L"⌫"
+                            : key == VK_RETURN     ? L"↵"
+                            : key == VK_SPACE      ? L"Space"
+                            : key == VK_SHIFT      ? L"⇧"
+                            : key == VK_CONTROL    ? L"Ctrl"
+                            : key == VK_MENU       ? L"Alt"
+                            : key == VK_OEM_COMMA  ? L","
+                            : key == VK_OEM_PERIOD ? L"."
+                            : key == VK_OEM_2      ? L"/"
+                            : key == VK_OEM_1      ? L";"
+                            : key == VK_OEM_7      ? L"'"
+                            : key == VK_OEM_4      ? L"["
+                            : key == VK_OEM_6      ? L"]"
+                            : key == VK_OEM_5      ? L"\\"
+                            : key == VK_OEM_MINUS  ? L"-"
+                                                   : L"=";
+        Label(dc, name, {box.left, box.top + 3, box.right, box.bottom - 13},
+              fonts.family, Palette().text_primary, DT_CENTER | DT_SINGLELINE);
+        Label(dc, n ? std::to_wstring(n) : L"",
+              {box.left, box.bottom - 14, box.right, box.bottom}, fonts.family,
+              Palette().text_muted, DT_CENTER | DT_SINGLELINE);
+        x += size + 4;
+      }
+    }
+  }
+  std::wstring Detail(const Json& m) {
+    return L"有效速度 " + Number(m.value("effectiveCPM", 0.0)) +
+           L" CPM  · 原始速度 " + Number(m.value("rawCPM", 0.0)) +
+           L" CPM\n过程正确率 " + Percent(m.value("processAccuracy", Json())) +
+           L" · 最终正确率 " + Percent(m.value("finalAccuracy", Json())) +
+           L"\n错 " + std::to_wstring(m.value("substitutions", 0)) + L" · 漏 " +
+           std::to_wstring(m.value("omissions", 0)) + L" · 多 " +
+           std::to_wstring(m.value("extras", 0)) + L" · 修正 " +
+           std::to_wstring(m.value("corrections", 0)) + L" 次" +
+           L"\n组字退格 " +
+           std::to_wstring(m.value("compositionBackspaces", 0)) +
+           L" · 上屏退格 " +
+           std::to_wstring(m.value("committedBackspaces", 0)) +
+           L" · 删除字符 " + std::to_wstring(m.value("deleted", 0)) +
+           L"\n并击 " +
+           (m.value("chords", Json()).is_null()
+                ? L"—"
+                : std::to_wstring(m["chords"].get<unsigned>())) +
+           L" · 码长 " +
+           (m.value("committed", 0) > 0
+                ? Number(m.value("keys", 0.0) / m["committed"].get<double>())
+                : L"—") +
+           L" 键/字 · 重复键 " + std::to_wstring(m.value("repeats", 0));
+  }
+  void Paint(HDC dc) {
+    RECT client{};
+    GetClientRect(hwnd, &client);
+    if (client.right <= 0 || client.bottom <= 0) return;
+    const auto frame = CreateCompatibleDC(dc);
+    const auto bitmap = frame ? CreateCompatibleBitmap(dc, client.right, client.bottom) : nullptr;
+    if (!bitmap) {
+      if (frame) DeleteDC(frame);
+      PaintContent(dc);
+      return;
+    }
+    const auto previous = SelectObject(frame, bitmap);
+    // Publish background, cards and glyphs together; suppressing erase alone
+    // cannot hide the intermediate background from a direct GDI paint.
+    PaintContent(frame);
+    BitBlt(dc, 0, 0, client.right, client.bottom, frame, 0, 0, SRCCOPY);
+    SelectObject(frame, previous);
+    DeleteObject(bitmap);
+    DeleteDC(frame);
+  }
+  void PaintContent(HDC dc) {
+    RECT client{};
+    GetClientRect(hwnd, &client);
+    FillRect(dc, &client, background);
+    SetBkMode(dc, TRANSPARENT);
+    const auto& p = Palette();
+    const float w = static_cast<float>(width - 18);
+    if (page == ui::SettingsPage::kPlugins) {
+      for (const auto& [y, name] : sections)
+        Label(dc, name,
+              {0, static_cast<float>(y), w, static_cast<float>(y + 24)},
+              fonts.title, p.text_secondary);
+      for (const auto& [box, i] : cards) {
+        const auto& item = plugins[i];
+        Box(dc, box);
+        const auto x = box.left, y = box.top;
+        ui::DrawIconGlyph(dc,
+                          item.kind == "extension" ? ui::IconId::kKeyboard
+                          : item.kind == "buffer"  ? ui::IconId::kLink
+                                                   : ui::IconId::kGrid,
+                          Rect({x + 12, y + 12, x + 36, y + 36}),
+                          ui::ToColorRef(p.accent));
+        Label(dc,
+              Wide(item.id == "builtin.apple-translation" ? "翻译" : item.name),
+              {x + 12, y + 45, box.right - 10, y + 66}, fonts.title,
+              p.text_primary, DT_SINGLELINE | DT_END_ELLIPSIS);
+        Label(dc, L"出品方 · RIMES 官方",
+              {x + 12, y + 70, box.right - 10, y + 87}, fonts.family,
+              p.text_muted, DT_SINGLELINE);
+        if (!(item.installed && item.can_install))
+          Label(dc,
+                item.installed ? (item.enabled ? L"已启用" : L"已停用")
+                               : L"未安装",
+                {x + 12, y + 98, box.right - 70, y + 118}, fonts.family,
+                p.text_muted, DT_SINGLELINE);
+      }
+      Label(
+          dc, message,
+          {0, static_cast<float>(total - 50), w, static_cast<float>(total - 5)},
+          fonts.body, p.text_secondary);
+    } else if (PracticePage()) {
+      const auto& a = metrics::Articles()[article];
+      if (!sub) {
+        const auto snapshot = service->Practice();
+        const auto m = snapshot.value("metrics", Json::object());
+        const bool english = a.language == "english";
+        Label(dc,
+              Wide(a.theme + " · " + a.difficulty) + L" · " +
+                  std::to_wstring(metrics::Characters(a.text).size()) +
+                  L" 字符 · v" + std::to_wstring(a.version),
+              {0, 42, w, 60}, fonts.family, p.text_muted);
+        Label(dc, status, {0, 66, w, 89}, fonts.body, p.text_secondary);
+        MetricCards(dc, 96, {L"有效速度", L"击键", L"回退", L"过程正确率"},
+                    {m.empty() ? L"—"
+                               : Number(m.value("effectiveCPM", 0.0) /
+                                        (english ? 5 : 1)) +
+                                     (english ? L" WPM" : L" 字/分"),
+                     std::to_wstring(m.value("keys", 0)),
+                     std::to_wstring(m.value("backspaces", 0)),
+                     Percent(m.value("processAccuracy", Json()))});
+        const float progress =
+            m.value("expected", 0) > 0
+                ? static_cast<float>((m.value("correct", 0.0) +
+                                      m.value("substitutions", 0.0) +
+                                      m.value("omissions", 0.0)) /
+                                     m["expected"].get<double>())
+                : 0;
+        ui::FillRoundRect(dc, Rect({0, 180, w - 115, 185}), Px(3),
+                          ui::ToColorRef(p.border));
+        if (progress > 0)
+          ui::FillRoundRect(dc, Rect({0, 180, (w - 115) * progress, 185}),
+                            Px(3), ui::ToColorRef(p.accent));
+        Label(dc,
+              Number(progress * 100, 0) + L"%   " +
+                  Duration(m.value("elapsed", 0.0)),
+              {w - 105, 174, w, 197}, fonts.family, p.text_muted);
+        Label(dc, L"输入区 · 组字中的编码不计分", {0, 366, w, 386},
+              fonts.family, p.text_muted);
+        std::vector<std::optional<double>> samples;
+        for (const auto& s : m.value("samples", Json::array()))
+          samples.push_back(s[1].get<double>() / (english ? 5 : 1));
+        Chart(dc, 540, 145, samples, L"有效速度曲线");
+        Label(dc, Detail(m), {0, 706, w, 850}, fonts.body, p.text_secondary);
+        Label(dc,
+              L"从首次输入计时。失焦、切换方案或提前结束记为练习。\n仅保存汇总"
+              L"成绩，不保存跟打正文；粘贴与拖入不可用于测速。",
+              {0, 865, w, 925}, fonts.family, p.text_muted);
+      } else {
+        const auto count = results.size();
+        std::vector<std::optional<double>> curve;
+        double best = 0, totalSpeed = 0;
+        unsigned comparable = 0;
+        for (auto i = results.rbegin(); i != results.rend(); ++i) {
+          const bool valid =
+              (*i)["complete"] == true && (*i)["reasons"].empty();
+          const auto speed = (*i)["metrics"].value("effectiveCPM", 0.0) /
+                             (a.language == "english" ? 5 : 1);
+          curve.push_back(valid ? std::optional<double>(speed) : std::nullopt);
+          if (valid) {
+            best = (std::max)(best, speed);
+            totalSpeed += speed;
+            ++comparable;
+          }
+        }
+        MetricCards(dc, 94,
+                    {L"最近成绩", L"有效成绩", L"最佳速度", L"平均速度"},
+                    {std::to_wstring(count), std::to_wstring(comparable),
+                     comparable ? Number(best) : L"—",
+                     comparable ? Number(totalSpeed / comparable) : L"—"});
+        Chart(dc, 190, 180, curve, L"相同文章、版本与输入方案的成绩");
+        Label(dc,
+              count > 0 ? L"最近成绩 · 点击详情查看完整指标"
+                        : L"等待你的第一次成绩",
+              {0, 394, w, 420}, fonts.body, p.text_secondary);
+        for (std::size_t i = 0; i < count; ++i) {
+          float y = 430 + static_cast<float>(i) * 66;
+          Box(dc, {0, y, w, y + 56});
+          const auto& r = results[i];
+          Label(dc,
+                Wide(metrics::Day(r["completedAt"].get<double>())) + L" · " +
+                    (r["context"].value("repeatArticle", false) ? L"重练"
+                                                                : L"首次") +
+                    (r["reasons"].empty() ? L"" : L" · 非正式练习"),
+                {12, y + 6, w - 100, y + 27}, fonts.family, p.text_secondary);
+          Label(dc,
+                Number(r["metrics"].value("effectiveCPM", 0.0) /
+                       (a.language == "english" ? 5 : 1)) +
+                    (a.language == "english" ? L" WPM" : L" 字/分") + L" · " +
+                    Percent(r["metrics"].value("processAccuracy", Json())) +
+                    L" · " + Duration(r["metrics"].value("elapsed", 0.0)),
+                {12, y + 30, w - 100, y + 51}, fonts.body, p.text_primary);
+        }
+      }
+    } else {
+      const auto data = service->Data();
+      const auto empty = Json{{"keys", Json::object()},
+                              {"keyCount", 0},
+                              {"characters", 0},
+                              {"active", 0.0}};
+      auto day = data["days"].value(selected_day, empty);
+      const auto active = day.value("active", 0.0);
+      auto cardValues = std::array<std::wstring, 4>{
+          std::to_wstring(day.value("characters", 0)),
+          std::to_wstring(day.value("keyCount", 0)), Duration(active),
+          active > 0 ? Number(day.value("characters", 0) * 60 / active) : L"—"};
+      if (!sub) {
+        Label(dc, Wide(selected_day) + L" · 本机输入汇总", {0, 45, w, 70},
+              fonts.body, p.text_secondary);
+        MetricCards(dc, 82,
+                    {L"成文字数", L"输入按键", L"活跃时长", L"日常速度"},
+                    cardValues);
+      }
+      std::vector<std::optional<double>> trend;
+      const auto base = SelectedTime();
+      for (int i = range - 1; i >= 0; --i) {
+        const auto key = metrics::Day(base - i * 86400);
+        const auto d = data["days"].value(key, empty);
+        const double sec = d.value("active", 0.0);
+        trend.push_back(
+            metric ? (sec > 0 ? std::optional<double>(d.value("characters", 0) *
+                                                      60 / sec)
+                              : std::nullopt)
+                   : std::optional<double>(d.value("characters", 0)));
+      }
+      Chart(dc, sub ? 48.0f : 174.0f, 165, trend,
+            std::to_wstring(range) + L" 天 · " +
+                (metric ? L"日常速度 (CPM)" : L"成文字数"));
+      const float axis = sub ? 194.0f : 320.0f;
+      Label(dc, Wide(metrics::Day(base - (range - 1) * 86400)),
+            {45, axis, 180, axis + 18}, fonts.family, p.text_muted);
+      Label(dc, Wide(selected_day), {w - 160, axis, w - 12, axis + 18},
+            fonts.family, p.text_muted, DT_RIGHT | DT_SINGLELINE);
+      if (!sub)
+        Keyboard(dc, 363.0f, day["keys"]);
+      else {
+        Label(dc, L"按键日历 · 全部历史", {0, 236, w, 264}, fonts.body,
+              p.text_primary);
+        dates.clear();
+        const int size = static_cast<int>(w / 54);
+        for (std::size_t yearIndex = 0; yearIndex < years.size(); ++yearIndex) {
+          const float offset = static_cast<float>(yearIndex) * 150;
+          if (420 + offset < scroll || 270 + offset > scroll + height) continue;
+          Label(dc, std::to_wstring(years[yearIndex]),
+                {0, 270 + offset, w, 292 + offset}, fonts.family, p.text_muted);
+          tm start{};
+          start.tm_year = years[yearIndex] - 1900;
+          start.tm_mon = 0;
+          start.tm_mday = 1;
+          start.tm_hour = 12;
+          start.tm_isdst = -1;
+          const auto first = static_cast<double>(mktime(&start));
+          for (int i = 0; i < 366; ++i) {
+            const auto date = metrics::Day(first + i * 86400);
+            if (std::stoi(date.substr(0, 4)) != years[yearIndex] ||
+                date > metrics::Day(metrics::Wall()))
+              break;
+            std::uint64_t count = 0;
+            if (data["days"].contains(date))
+              for (const auto& n : data["days"][date]["keys"])
+                count += n.get<unsigned>();
+            float x = static_cast<float>((i + start.tm_wday) / 7 * size),
+                  y = 300.0f + (i + start.tm_wday) % 7 * size + offset;
+            ui::DipRect box{x, y, x + size - 2, y + size - 2};
+            ui::FillRoundRect(
+                dc, Rect(box), Px(2),
+                ui::ToColorRef(
+                    count ? ui::Blend(
+                                p.surface_secondary, p.accent,
+                                (std::min)(0.9f,
+                                           0.2f + std::log1p(static_cast<float>(
+                                                      count)) /
+                                                      12))
+                          : p.surface_secondary));
+            dates.push_back({box, date});
+          }
+        }
+        const float offset = static_cast<float>(years.size() - 1) * 150;
+        Label(dc, Wide(selected_day) + L" · 选中日期",
+              {0, 394 + offset, w, 418 + offset}, fonts.body, p.text_secondary);
+        MetricCards(dc, 432 + offset,
+                    {L"成文字数", L"输入按键", L"活跃时长", L"日常速度"},
+                    cardValues);
+        Keyboard(dc, 530 + offset, day["keys"]);
+        std::vector<std::optional<double>> sessions;
+        for (const auto& s : data["sessions"]) {
+          const double sec = s.value("active", 0.0);
+          sessions.push_back(sec > 0 ? std::optional<double>(
+                                           s.value("characters", 0) * 60 / sec)
+                                     : std::nullopt);
+        }
+        if (sessions.size() > 100)
+          sessions.erase(sessions.begin(), sessions.end() - 100);
+        Chart(dc, 796 + offset, 165, sessions, L"最近输入会话 · 日常速度");
+        Label(dc, L"选择日期或点击日历格查看当天记录。",
+              {0, 990 + offset, w, 1030 + offset}, fonts.family, p.text_muted);
+      }
+      Label(
+          dc,
+          L"只记录 RIMES 输入路径的汇总。活跃时长按 10 "
+          L"秒内的连续输入累计。\n按键分布和输入趋势可独立关闭，停用保留历史；"
+          L"文章跟打不计入日常统计。",
+          {0, static_cast<float>(total - 70), w, static_cast<float>(total - 8)},
+          fonts.family, p.text_muted);
+    }
+    if (!service->Issue().empty())
+      Label(dc, Wide(service->Issue()),
+            {160, static_cast<float>(total - 85), w,
+             static_cast<float>(total - 8)},
+            fonts.family, p.warning_text);
+  }
+  double SelectedTime() {
+    tm value{};
+    int y = 0, m = 0, d = 0;
+    if (sscanf_s(selected_day.c_str(), "%d-%d-%d", &y, &m, &d) != 3)
+      return metrics::Wall();
+    value.tm_year = y - 1900;
+    value.tm_mon = m - 1;
+    value.tm_mday = d;
+    value.tm_hour = 12;
+    value.tm_isdst = -1;
+    return static_cast<double>(mktime(&value));
+  }
+  void ConfirmClear(const std::string& kind, const std::string& day = {}) {
+    if (MessageBoxW(
+            hwnd,
+            L"确定清空这些本机记录？此操作无法撤销，其他类型的记录将保留。",
+            L"清空记录", MB_YESNO | MB_ICONQUESTION | MB_DEFBUTTON2) == IDYES) {
+      service->Clear(kind, day);
+      Build();
+    }
+  }
+  void Command(int id, int notification) {
+    // RichEdit emits EN_UPDATE while painting. Treating it as an action and
+    // invalidating all children below creates a paint -> EN_UPDATE -> paint
+    // loop even when no text changes. Only actual editor changes publish.
+    if (id == 7003 || id == 7004) {
+      if (id == 7004 && notification == EN_CHANGE)
+        PostMessageW(hwnd, WM_APP + 72, 0, 0);
+      return;
+    }
+    if (id == 7000 || id == 7010) {
+      if (notification != CBN_SELCHANGE) return;
+    } else if (notification != BN_CLICKED) {
+      return;
+    }
+    if (id == 7000 && notification == CBN_SELCHANGE) {
+      ResetArticle();
+      article =
+          static_cast<int>(SendMessageW(controls[id], CB_GETCURSEL, 0, 0));
+      status = L"选择文章后开始跟打";
+      if (editor) {
+        suppress = true;
+        SetWindowTextW(editor, L"");
+        suppress = false;
+      }
+      Build();
+    }
+    if (id == 7001) {
+      Start();
+      Refresh();
+    }
+    if (id == 7002) {
+      if (Composing(editor)) {
+        status = L"请先确认或取消当前组字，再结束";
+        SetFocus(editor);
+      } else
+        Stop("");
+      Refresh();
+    }
+    if (id == 7005) {
+      ResetArticle();
+      article = (article + 1 +
+                 std::random_device{}() % (metrics::Articles().size() - 1)) %
+                metrics::Articles().size();
+      Build();
+    }
+    if (id == 7010 && notification == CBN_SELCHANGE) {
+      auto n = SendMessageW(controls[id], CB_GETCURSEL, 0, 0);
+      if (n >= 0 && n < static_cast<LRESULT>(comparisons.size()))
+        comparison = comparisons[n];
+      Build();
+    }
+    if (id == 7011) ConfirmClear("results");
+    if (id >= 7300 && id < 7800 &&
+        id - 7300 < static_cast<int>(results.size())) {
+      const auto& r = results[id - 7300];
+      const auto title = Wide(metrics::Articles()[article].title);
+      MessageBoxW(
+          hwnd,
+          (Detail(r["metrics"]) + L"\n\n输入方案：" +
+           Wide(r["context"].value("schema", "")) + L"\n文章版本：" +
+           std::to_wstring(r.value("articleVersion", 1)) + L"\n输入源：" +
+           Wide(r["context"].value("inputSource", "")) + L"\n键位版本：" +
+           Wide(r["context"].value("keymapRevision", "")))
+              .c_str(),
+          title.c_str(), MB_OK);
+    }
+    if (id == 7100 || id == 7101) range = id == 7100 ? 7 : 30;
+    if (id == 7102 || id == 7103) metric = id == 7102 ? 0 : 1;
+    if (id == 7110 || id == 7111) {
+      auto d = service->Data();
+      service->Preferences(id == 7110 ? !d["recordKeys"].get<bool>()
+                                      : d["recordKeys"].get<bool>(),
+                           id == 7111 ? !d["recordActivity"].get<bool>()
+                                      : d["recordActivity"].get<bool>());
+    }
+    if (id == 7112) ConfirmClear("activity");
+    if (id == 7113) ConfirmClear("keys", sub ? "" : selected_day);
+    if (id == 7200 &&
+        MessageBoxW(hwnd, L"将先备份当前统计文件，再创建空记录。是否继续？",
+                    L"备份并重建", MB_YESNO | MB_DEFBUTTON2) == IDYES) {
+      service->Repair();
+      Build();
+    }
+    if (id >= 8000) {
+      const auto index = (id - 8000) / 4;
+      const auto action = (id - 8000) % 4;
+      if (index >= static_cast<int>(plugins.size())) return;
+      const auto p = plugins[index];
+      if (action == 1) {
+        MessageBoxW(hwnd,
+                    (Description(p.id) + L"\n\n" + Kind(p.kind) + L" · " +
+                     Wide(p.version) + L"\n" + Wide(p.id) +
+                     L"\n停用或卸载保留本机数据。")
+                        .c_str(),
+                    Wide(p.name).c_str(), MB_OK);
+        return;
+      }
+      if (action == 2) {
+        if (cb.navigate) {
+          auto route =
+              p.id == "builtin.typing-speed" ? ui::SettingsPage::kTyping
+              : p.id == "builtin.statistics" ? ui::SettingsPage::kStatistics
+              : p.kind == "extension"        ? ui::SettingsPage::kChord
+              : p.kind == "capsule"          ? ui::SettingsPage::kCapsule
+              : p.kind == "mailbox"          ? ui::SettingsPage::kMailbox
+                                             : ui::SettingsPage::kBuffer;
+          if (p.enabled)
+            cb.navigate(route);
+          else
+            message = L"先启用该插件，再打开设置。";
+        }
+        return;
+      }
+      if (action == 3 &&
+          MessageBoxW(hwnd, L"卸载此插件？本机数据将保留。",
+                      Wide(p.name).c_str(), MB_YESNO | MB_DEFBUTTON2) != IDYES)
+        return;
+      std::string error;
+      const auto op = action == 3    ? "uninstall"
+                      : !p.installed ? "install"
+                      : p.enabled    ? "disable"
+                                     : "enable";
+      if (cb.manage && cb.manage(p.id, op, &error))
+        message = L"已更新 · " + Wide(p.name);
+      else
+        message = Wide(error);
+      Build();
+      PostMessageW(parent, WM_APP + 73, 0, 0);
+    }
+    RedrawWindow(hwnd, nullptr, nullptr, RDW_INVALIDATE | RDW_ALLCHILDREN);
+  }
+  static LRESULT CALLBACK ComboProc(HWND h, UINT msg, WPARAM w, LPARAM l,
+                                    UINT_PTR id, DWORD_PTR ref) {
+    auto* self = reinterpret_cast<Impl*>(ref);
+    if (msg == WM_NCDESTROY) {
+      RemoveWindowSubclass(h, ComboProc, id);
+      return DefSubclassProc(h, msg, w, l);
+    }
+    if (msg != WM_PAINT && msg != WM_PRINTCLIENT && msg != WM_PRINT)
+      return DefSubclassProc(h, msg, w, l);
+    // Preserve the native segmented date editor while it has keyboard focus.
+    // Its resting state follows the same theme as the other selector controls.
+    if (GetDlgCtrlID(h) == 7104 && GetFocus() == h)
+      return DefSubclassProc(h, msg, w, l);
+    PAINTSTRUCT ps{};
+    auto dc = msg == WM_PAINT ? BeginPaint(h, &ps) : reinterpret_cast<HDC>(w);
+    RECT r{};
+    GetClientRect(h, &r);
+    const auto& p = self->Palette();
+    ui::FillRectColor(dc, r, ui::ToColorRef(p.settings_background));
+    ui::FillRoundRect(dc, r, self->Px(6), ui::ToColorRef(p.surface));
+    ui::StrokeRoundRect(dc, r, self->Px(6),
+                        ui::ToColorRef(GetFocus() == h ? p.accent : p.border));
+    RECT label = r;
+    label.left += self->Px(8);
+    label.right -= self->Px(28);
+    SelectObject(dc, self->fonts.body);
+    SetBkMode(dc, TRANSPARENT);
+    SetTextColor(dc, ui::ToColorRef(p.text_primary));
+    const auto text =
+        GetDlgCtrlID(h) == 7104 ? Wide(self->selected_day) : Text(h);
+    DrawTextW(dc, text.c_str(), -1, &label,
+              DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
+    auto pen =
+        CreatePen(PS_SOLID, self->Px(1), ui::ToColorRef(p.text_secondary));
+    const auto old = SelectObject(dc, pen);
+    const int x = r.right - self->Px(14), y = (r.top + r.bottom) / 2;
+    MoveToEx(dc, x - self->Px(4), y - self->Px(2), nullptr);
+    LineTo(dc, x, y + self->Px(2));
+    LineTo(dc, x + self->Px(4), y - self->Px(2));
+    SelectObject(dc, old);
+    DeleteObject(pen);
+    if (msg == WM_PAINT) EndPaint(h, &ps);
+    return 0;
+  }
+  static LRESULT CALLBACK EditorProc(HWND h, UINT msg, WPARAM w, LPARAM l,
+                                     UINT_PTR id, DWORD_PTR ref) {
+    auto* self = reinterpret_cast<Impl*>(ref);
+    if (msg == WM_NCDESTROY) {
+      RemoveWindowSubclass(h, EditorProc, id);
+      return DefSubclassProc(h, msg, w, l);
+    }
+    if (msg == WM_GETDLGCODE)
+      return DLGC_WANTALLKEYS | DLGC_WANTCHARS | DLGC_WANTARROWS | DLGC_WANTTAB;
+    if (msg == WM_PASTE || msg == WM_DROPFILES || msg == WM_UNDO ||
+        (msg == WM_KEYDOWN &&
+         ((w == 'V' && (GetKeyState(VK_CONTROL) & 0x8000)) ||
+          (w == VK_INSERT && (GetKeyState(VK_SHIFT) & 0x8000))))) {
+      if (self->service->Armed()) {
+        self->service->Mark("assistedInput");
+        self->status = L"不支持粘贴或拖入 · 本次记为练习";
+        MessageBeep(MB_OK);
+      }
+      return 0;
+    }
+    if (msg == WM_KEYDOWN || msg == WM_SYSKEYDOWN) {
+      unsigned mods = 0;
+      if (GetKeyState(VK_CONTROL) & 0x8000)
+        mods |= static_cast<unsigned>(core::KeyModifiers::kControl);
+      if (GetKeyState(VK_MENU) & 0x8000)
+        mods |= static_cast<unsigned>(core::KeyModifiers::kAlt);
+      if ((GetKeyState(VK_LWIN) | GetKeyState(VK_RWIN)) & 0x8000)
+        mods |= static_cast<unsigned>(core::KeyModifiers::kWindows);
+      self->service->LocalKey(
+          static_cast<unsigned>(w), mods, (l & (1LL << 30)) != 0,
+          static_cast<DWORD>(GetMessageTime()), Composing(h));
+    }
+    if (msg == WM_IME_STARTCOMPOSITION) self->service->Composition();
+    if (msg == WM_KILLFOCUS && self->service->Armed()) {
+      self->service->Mark("focusLost");
+      PostMessageW(self->hwnd, WM_APP + 74, 0, 0);
+    }
+    CHARRANGE replaced{};
+    std::wstring before;
+    if (msg == WM_CHAR && w >= 32 && self->service->Armed() && !Composing(h)) {
+      SendMessageW(h, EM_EXGETSEL, 0, reinterpret_cast<LPARAM>(&replaced));
+      if (replaced.cpMin < replaced.cpMax) before = Text(h);
+    }
+    const auto result = DefSubclassProc(h, msg, w, l);
+    // RichEdit can replace a selection with identical text. A plain text
+    // diff cannot see this real attempt/correction, so preserve its range.
+    if (!before.empty() && before == Text(h) && !Composing(h)) {
+      const auto prefix =
+          metrics::Characters(Utf8(before.substr(0, replaced.cpMin)));
+      const auto selection = metrics::Characters(
+          Utf8(before.substr(replaced.cpMin, replaced.cpMax - replaced.cpMin)));
+      const auto suffix =
+          metrics::Characters(Utf8(before.substr(replaced.cpMax)));
+      if (prefix.size() + selection.size() + suffix.size() ==
+          metrics::Characters(Utf8(before)).size())
+        self->service->Reconcile(
+            Utf8(before), {{prefix.size(), prefix.size() + selection.size()}});
+    }
+    if (msg == WM_IME_ENDCOMPOSITION || msg == WM_CHAR)
+      PostMessageW(self->hwnd, WM_APP + 72, 0, 0);
+    return result;
+  }
+  static LRESULT CALLBACK Proc(HWND h, UINT msg, WPARAM w, LPARAM l) {
+    auto* self = reinterpret_cast<Impl*>(GetWindowLongPtrW(h, GWLP_USERDATA));
+    if (msg == WM_NCCREATE) {
+      self = static_cast<Impl*>(
+          reinterpret_cast<CREATESTRUCTW*>(l)->lpCreateParams);
+      SetWindowLongPtrW(h, GWLP_USERDATA, reinterpret_cast<LONG_PTR>(self));
+    }
+    if (!self) return DefWindowProcW(h, msg, w, l);
+    switch (msg) {
+      case WM_PRINTCLIENT:
+        self->Paint(reinterpret_cast<HDC>(w));
+        return 0;
+      case WM_PAINT: {
+        PAINTSTRUCT ps{};
+        auto dc = BeginPaint(h, &ps);
+        self->Paint(dc);
+        EndPaint(h, &ps);
+        return 0;
+      }
+      case WM_ERASEBKGND:
+        return 1;
+      case WM_TIMER:
+        self->Refresh();
+        return 0;
+      case WM_APP + 72:
+        self->Publish();
+        return 0;
+      case WM_APP + 74:
+        self->Stop("focusLost");
+        self->Refresh();
+        return 0;
+      case WM_COMMAND:
+        self->Command(LOWORD(w), HIWORD(w));
+        return 0;
+      case WM_NOTIFY: {
+        auto* n = reinterpret_cast<NMHDR*>(l);
+        if (n->idFrom == 7104 && n->code == DTN_DATETIMECHANGE) {
+          auto* d = reinterpret_cast<NMDATETIMECHANGE*>(l);
+          if (d->dwFlags == GDT_VALID) {
+            char text[16];
+            sprintf_s(text, "%04u-%02u-%02u", d->st.wYear, d->st.wMonth,
+                      d->st.wDay);
+            self->selected_day = text;
+            InvalidateRect(h, nullptr, FALSE);
+          }
+        }
+        return 0;
+      }
+      case WM_LBUTTONUP: {
+        const float x = static_cast<short>(LOWORD(l)) * 96.0f / self->dpi,
+                    y = static_cast<short>(HIWORD(l)) * 96.0f / self->dpi +
+                        self->scroll;
+        for (const auto& [r, day] : self->dates)
+          if (x >= r.left && x < r.right && y >= r.top && y < r.bottom) {
+            self->selected_day = day;
+            SYSTEMTIME selected{};
+            selected.wYear = static_cast<WORD>(std::stoi(day.substr(0, 4)));
+            selected.wMonth = static_cast<WORD>(std::stoi(day.substr(5, 2)));
+            selected.wDay = static_cast<WORD>(std::stoi(day.substr(8, 2)));
+            SendMessageW(self->controls[7104], DTM_SETSYSTEMTIME, GDT_VALID,
+                         reinterpret_cast<LPARAM>(&selected));
+            InvalidateRect(h, nullptr, FALSE);
+            break;
+          }
+        return 0;
+      }
+      case WM_VSCROLL:
+      case WM_MOUSEWHEEL: {
+        int next = self->scroll;
+        if (msg == WM_MOUSEWHEEL)
+          next -= GET_WHEEL_DELTA_WPARAM(w) / WHEEL_DELTA * 70;
+        else {
+          SCROLLINFO s{sizeof(s), SIF_TRACKPOS};
+          GetScrollInfo(self->scrollbar, SB_CTL, &s);
+          switch (LOWORD(w)) {
+            case SB_THUMBTRACK:
+            case SB_THUMBPOSITION:
+              next = s.nTrackPos;
+              break;
+            case SB_TOP:
+              next = 0;
+              break;
+            case SB_BOTTOM:
+              next = self->total - self->height;
+              break;
+            case SB_LINEUP:
+              next -= 32;
+              break;
+            case SB_LINEDOWN:
+              next += 32;
+              break;
+            case SB_PAGEUP:
+              next -= self->height - 32;
+              break;
+            case SB_PAGEDOWN:
+              next += self->height - 32;
+              break;
+          }
+        }
+        self->scroll =
+            (std::clamp)(next, 0, (std::max)(0, self->total - self->height));
+        self->ShowControls();
+        InvalidateRect(h, nullptr, FALSE);
+        return 0;
+      }
+      case WM_CTLCOLORSTATIC:
+      case WM_CTLCOLOREDIT:
+      case WM_CTLCOLORLISTBOX: {
+        auto dc = reinterpret_cast<HDC>(w);
+        SetTextColor(dc, ui::ToColorRef(self->Palette().text_primary));
+        SetBkColor(dc, ui::ToColorRef(self->Palette().surface));
+        return reinterpret_cast<LRESULT>(self->surface);
+      }
+      case WM_DRAWITEM: {
+        auto* item = reinterpret_cast<DRAWITEMSTRUCT*>(l);
+        if (item->CtlType != ODT_BUTTON) break;
+        const auto& p = self->Palette();
+        bool selected = false;
+        auto d = self->service->Data();
+        if (item->CtlID == 7100) selected = self->range == 7;
+        if (item->CtlID == 7101) selected = self->range == 30;
+        if (item->CtlID == 7102) selected = self->metric == 0;
+        if (item->CtlID == 7103) selected = self->metric == 1;
+        if (item->CtlID == 7110) selected = d["recordKeys"].get<bool>();
+        if (item->CtlID == 7111) selected = d["recordActivity"].get<bool>();
+        auto r = item->rcItem;
+        ui::FillRectColor(
+            item->hDC, r,
+            ui::ToColorRef(item->CtlID >= 8000 ? p.surface_secondary
+                                               : p.settings_background));
+        if (item->CtlID >= 8000 && (item->CtlID - 8000) % 4 == 0) {
+          const auto index = (item->CtlID - 8000) / 4;
+          if (index < self->plugins.size() && self->plugins[index].installed) {
+            const bool enabled = self->plugins[index].enabled;
+            RECT track{r.right - self->Px(36), (r.bottom - self->Px(20)) / 2,
+                       r.right, (r.bottom + self->Px(20)) / 2};
+            ui::FillRoundRect(
+                item->hDC, track, self->Px(10),
+                ui::ToColorRef(enabled ? p.accent : p.border_strong));
+            RECT knob{
+                enabled ? track.right - self->Px(18) : track.left + self->Px(2),
+                track.top + self->Px(2),
+                enabled ? track.right - self->Px(2) : track.left + self->Px(18),
+                track.bottom - self->Px(2)};
+            ui::FillRoundRect(item->hDC, knob, self->Px(8), RGB(255, 255, 255));
+            if (item->itemState & ODS_FOCUS) DrawFocusRect(item->hDC, &r);
+            return TRUE;
+          }
+        }
+        ui::FillRoundRect(
+            item->hDC, r, self->Px(6),
+            ui::ToColorRef(selected ? p.accent : p.surface_secondary));
+        ui::StrokeRoundRect(
+            item->hDC, r, self->Px(6),
+            ui::ToColorRef(item->itemState & ODS_FOCUS ? p.accent : p.border));
+        SelectObject(item->hDC, self->fonts.body);
+        SetBkMode(item->hDC, TRANSPARENT);
+        SetTextColor(item->hDC, ui::ToColorRef(item->itemState & ODS_DISABLED
+                                                   ? p.text_muted
+                                               : selected ? p.accent_foreground
+                                                          : p.text_primary));
+        auto text = Text(item->hwndItem);
+        DrawTextW(item->hDC, text.c_str(), -1, &r,
+                  DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+        return TRUE;
+      }
+      case WM_DESTROY:
+        KillTimer(h, 1);
+        break;
+    }
+    return DefWindowProcW(h, msg, w, l);
+  }
+};
+ExtensionPages::ExtensionPages(HWND parent, ExtensionCallbacks callbacks)
+    : impl_(std::make_unique<Impl>(parent, std::move(callbacks))) {}
+ExtensionPages::~ExtensionPages() = default;
+HWND ExtensionPages::window() const { return impl_->hwnd; }
+bool ExtensionPages::Owns(HWND h) const {
+  return h == impl_->hwnd || IsChild(impl_->hwnd, h);
+}
+void ExtensionPages::Deactivate() { impl_->Stop("focusLost"); }
+void ExtensionPages::Layout(ui::SettingsPage page, int subpage,
+                            const ui::DipRect& body, unsigned dpi,
+                            ui::ThemeId theme) {
+  auto& s = *impl_;
+  const bool show = page == ui::SettingsPage::kTyping ||
+                    page == ui::SettingsPage::kStatistics ||
+                    page == ui::SettingsPage::kPlugins;
+  if (s.page != page || s.sub != subpage) {
+    s.Stop("interrupted");
+    if (page == ui::SettingsPage::kTyping && subpage == 0) {
+      s.ResetArticle();
+    }
+    s.scroll = 0;
+  }
+  s.page = page;
+  s.sub = subpage;
+  s.visible = show;
+  if (!show) {
+    ShowWindow(s.hwnd, SW_HIDE);
+    return;
+  }
+  s.dpi = dpi;
+  s.theme = theme;
+  s.width = static_cast<int>(body.width());
+  s.height = static_cast<int>(body.height());
+  SetWindowPos(s.hwnd, nullptr, s.Px(body.left), s.Px(body.top),
+               s.Px(body.width()), s.Px(body.height()),
+               SWP_NOZORDER | SWP_NOACTIVATE | SWP_SHOWWINDOW);
+  s.Build();
+}
+}  // namespace rimes::windows::workbench

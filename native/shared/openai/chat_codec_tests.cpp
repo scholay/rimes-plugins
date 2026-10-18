@@ -20,6 +20,11 @@ int main() {
     Check(decoder.Preview() == "First 🙂." && !decoder.Done(), "fragmented Unicode or partial envelope lost preview");
     decoder.Feed(Event(R"({"text":"第二段。","title":null}]})") + "data: [DONE]\n\n"); decoder.Finish();
     Check(decoder.Blocks() == std::vector<std::string>({"First 🙂.", "第二段。"}), "logical blocks changed");
+    Check(decoder.Preview("\n\n") == "First 🙂.\n\n第二段。", "conversation separators lost");
+    Reject([&] { RequestBody("model", std::string(kTextLimit + 1, 'a'), ""); });
+    Check(Json::parse(RequestBody("model", std::string(kTextLimit + 1, 'a'), "", kWireLimit)).at("messages")[1].at("content").get<std::string>().size() == kTextLimit + 1, "bounded conversation prompt rejected");
+    Reject([&] { RequestBody("model", std::string(kWireLimit + 1, 'a'), "", kWireLimit + 1); });
+    Reject([&] { Joined({std::string(kTextLimit, 'a'), "b"}, "\n\n"); });
     Check(LogicalBlocks("```json\n{\"blocks\":[{\"text\":\" a\\r\\nb \"}]}\n```")[0] == "a\nb", "native normalization differs");
     Decoder plain; plain.Feed(Event("Plain fallback.") + "data: [DONE]\n\n"); plain.Finish();
     Check(plain.Preview() == "Plain fallback.", "plain text fallback lost");

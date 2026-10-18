@@ -34,6 +34,14 @@ final class FlyChordLearningSettingsViewController: NSViewController {
 
     required init?(coder: NSCoder) { nil }
 
+    /// Public-schema render fixtures never read the user's active keymap or progress.
+    init(subpageID: String, schema: FlyChordSchema, progressStore: FlyChordProgressStore) {
+        self.subpageID = subpageID
+        self.schemaResult = .success(schema)
+        self.progressStoreResult = .success(progressStore)
+        super.init(nibName: nil, bundle: nil)
+    }
+
     override func loadView() {
         if subpageID == "keymap" {
             let editor = ChordKeymapEditorViewController()

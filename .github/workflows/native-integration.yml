@@ -26,8 +26,8 @@ jobs:
           - {platform: macos, runner: macos-15}
           - {platform: ios, runner: macos-26}
           - {platform: android, runner: ubuntu-24.04}
-          - {platform: windows-x64, runner: windows-2022, architecture: x64}
-          - {platform: windows-x86, runner: windows-2022, architecture: x86}
+          - {platform: windows-x64, runner: windows-2022, architecture: x64, host: c6c06dab72eae6032e44ba78ade8c9ea15c99dbe}
+          - {platform: windows-x86, runner: windows-2022, architecture: x86, host: c6c06dab72eae6032e44ba78ade8c9ea15c99dbe}
     runs-on: ${{ matrix.runner }}
     defaults:
       run:
@@ -36,9 +36,9 @@ jobs:
       - name: Check out compatible host
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
-          repository: scholay/rimes
-          # Includes shared validation for packages that also declare Linux.
-          ref: 21803a550680342a50f56353339aa940af798d5b
+          repository: scholay/xsime
+          # Keep each native integration pinned to a compatible host.
+          ref: ${{ matrix.host || '21803a550680342a50f56353339aa940af798d5b' }}
           path: host
           persist-credentials: false
 

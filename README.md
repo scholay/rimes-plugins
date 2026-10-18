@@ -15,6 +15,8 @@ RIMES 的中文输入能力基于 [Rime 输入法引擎（librime）](https://gi
 
 原生适配在本体构建时固定版本导入，随宿主签名；运行时下载包提供宿主解释的处理内容。完整约定见 [插件协议](SPECIFICATION.md)。
 
+Windows 的“打字测速”和“统计”已提供与 macOS 相同插件身份的原生适配，源码位于 `native/windows/metrics*`，由 `source-map.json` 固定导入。文章素材以 macOS 八篇原文为准；修改后运行 `python scripts/generate_windows_articles.py`，使用 `--check` 验证两端一致。插件启停、数据存储与隐私事件边界仍由宿主管理。
+
 ## 目录
 
 - [plugins/](plugins/)：插件代码与各插件说明。

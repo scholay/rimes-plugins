@@ -18,6 +18,10 @@
     "linux": {
       "legacyID": "builtin.statistics",
       "distribution": "bundled"
+    },
+    "windows": {
+      "legacyID": "builtin.statistics",
+      "distribution": "bundled"
     }
   },
   "capabilities": [

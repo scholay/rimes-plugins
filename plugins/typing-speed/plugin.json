@@ -18,6 +18,10 @@
     "linux": {
       "legacyID": "builtin.typing-speed",
       "distribution": "bundled"
+    },
+    "windows": {
+      "legacyID": "builtin.typing-speed",
+      "distribution": "bundled"
     }
   },
   "capabilities": [

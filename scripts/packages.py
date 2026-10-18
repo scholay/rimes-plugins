@@ -135,7 +135,7 @@ def native_sources(root: Path, plugin_ids: set[str]) -> tuple[dict, dict[str, by
         records.append({**entry, "sha256": hashlib.sha256(data).hexdigest()})
         destinations.add(destination)
     result = {**source_map, "files": records}
-    for name in ("LICENSE", "NOTICE", "LICENSES/MIT-legacy.txt", "THIRD_PARTY_NOTICES.md"):
+    for name in ("LICENSE", "NOTICE", "LICENSES/MIT-legacy.txt", "LICENSES/Swift-Apache-2.0.txt", "THIRD_PARTY_NOTICES.md"):
         files[name] = safe_path(root, name).read_bytes()
     files["source-map.json"] = canonical(result)
     return result, files

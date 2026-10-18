@@ -14,6 +14,10 @@
     "macos": {
       "legacyID": "builtin.capsule.notes",
       "distribution": "bundled"
+    },
+    "linux": {
+      "distribution": "bundled",
+      "legacyID": "builtin.capsule.notes"
     }
   },
   "capabilities": [

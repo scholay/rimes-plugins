@@ -49,6 +49,27 @@ class PackageTests(unittest.TestCase):
         self.assertTrue({"macos", "ios", "android", "windows"} <= set(chord["platforms"]))
         self.assertIn("builtin.apple-translation", {p["id"] for p in items if "linux" in p["platforms"]})
 
+    def test_linux_capsule_modules_share_native_identity_and_filters(self):
+        items = {item["id"]: item for item in packages.manifests(packages.ROOT)}
+        for module in ("temporary", "capture", "notes", "resources", "passwords"):
+            item = items["builtin.capsule." + module]
+            self.assertEqual(item["platforms"]["linux"]["distribution"], "bundled")
+            self.assertEqual(item["platforms"]["linux"]["legacyID"], item["platforms"]["macos"]["legacyID"])
+            self.assertEqual(item["contribution"]["type"], "host.module.v1")
+            self.assertEqual(item["contribution"]["options"]["module"], module)
+            self.assertEqual(item["capabilities"], ["capsule.navigate"])
+
+    def test_linux_mailbox_modules_keep_navigation_only_authority(self):
+        items = {item["id"]: item for item in packages.manifests(packages.ROOT)}
+        for module in ("terminal", "chat", "inbox"):
+            item = items["builtin.mailbox." + module]
+            self.assertEqual(item["platforms"]["linux"]["distribution"], "bundled")
+            self.assertEqual(item["platforms"]["linux"]["legacyID"], item["id"])
+            self.assertEqual(item["contribution"]["options"]["host"], "mailbox")
+            self.assertEqual(item["contribution"]["options"]["module"], module)
+            self.assertEqual(item["capabilities"], ["mailbox.navigate"])
+            self.assertEqual(item["contribution"]["options"]["actions"], "open" if module == "terminal" else "open,search")
+
     def test_reject_unsafe_source_paths_and_symlinks(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
@@ -77,6 +98,7 @@ class PackageTests(unittest.TestCase):
                     data = archive.read(entry["source"])
                     self.assertEqual(hashlib.sha256(data).hexdigest(), entry["sha256"])
                 self.assertIn("LICENSES/MIT-legacy.txt", archive.namelist())
+                self.assertIn("LICENSES/Swift-Apache-2.0.txt", archive.namelist())
 
     def test_duplicate_plugin_and_host_destination_are_rejected(self):
         with tempfile.TemporaryDirectory() as temporary:

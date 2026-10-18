@@ -594,6 +594,20 @@
       "plugins": [
         "builtin.statistics"
       ]
+    },
+    {
+      "source": "native/shared/typing-practice/typing_practice_core.hpp",
+      "destination": "platforms/linux/typing-practice/core/typing_practice_core.hpp",
+      "plugins": [
+        "builtin.typing-speed"
+      ]
+    },
+    {
+      "source": "native/shared/typing-practice/typing_practice_core.cpp",
+      "destination": "platforms/linux/typing-practice/core/typing_practice_core.cpp",
+      "plugins": [
+        "builtin.typing-speed"
+      ]
     }
   ]
 }

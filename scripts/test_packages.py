@@ -98,6 +98,7 @@ class PackageTests(unittest.TestCase):
                     data = archive.read(entry["source"])
                     self.assertEqual(hashlib.sha256(data).hexdigest(), entry["sha256"])
                 self.assertIn("LICENSES/MIT-legacy.txt", archive.namelist())
+                self.assertIn("LICENSES/Swift-Apache-2.0.txt", archive.namelist())
 
     def test_duplicate_plugin_and_host_destination_are_rejected(self):
         with tempfile.TemporaryDirectory() as temporary:

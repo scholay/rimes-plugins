@@ -566,6 +566,20 @@
       "plugins": [
         "builtin.openai-compatible"
       ]
+    },
+    {
+      "source": "native/shared/chord/chord_core.hpp",
+      "destination": "platforms/linux/chord/core/chord_core.hpp",
+      "plugins": [
+        "builtin.fly-chord-learning"
+      ]
+    },
+    {
+      "source": "native/shared/chord/chord_core.cpp",
+      "destination": "platforms/linux/chord/core/chord_core.cpp",
+      "plugins": [
+        "builtin.fly-chord-learning"
+      ]
     }
   ]
 }

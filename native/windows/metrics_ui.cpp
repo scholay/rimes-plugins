@@ -164,6 +164,8 @@ struct ExtensionPages::Impl {
   bool suppress = false, visible = false, stopping = false, was_armed = false;
   Json last_states;
   Json last_practice;
+  Json last_data;
+  std::string last_issue;
   std::wstring last_practice_status;
   int Px(double v) const { return static_cast<int>(std::lround(v * dpi / 96)); }
   RECT Rect(ui::DipRect r) const {
@@ -448,6 +450,8 @@ struct ExtensionPages::Impl {
     Colors();
     last_practice = Json();
     last_practice_status.clear();
+    last_data = service->Data();
+    last_issue = service->Issue();
     InvalidateRect(hwnd, nullptr, FALSE);
   }
   void PopulateHistory(HWND contexts) {
@@ -620,12 +624,18 @@ struct ExtensionPages::Impl {
       bool changed = current.size() != plugins.size();
       for (std::size_t i = 0; !changed && i < current.size(); ++i)
         changed = current[i].id != plugins[i].id ||
+                  current[i].name != plugins[i].name ||
+                  current[i].version != plugins[i].version ||
+                  current[i].kind != plugins[i].kind ||
+                  current[i].bundled != plugins[i].bundled ||
+                  current[i].can_install != plugins[i].can_install ||
                   current[i].installed != plugins[i].installed ||
                   current[i].enabled != plugins[i].enabled;
       if (changed) {
         Build();
         PostMessageW(parent, WM_APP + 73, 0, 0);
       }
+      return;
     }
     if (page == ui::SettingsPage::kTyping && !sub) {
       const bool armed = service->Armed();
@@ -673,7 +683,20 @@ struct ExtensionPages::Impl {
       }
       return;
     }
-    InvalidateRect(hwnd, nullptr, FALSE);
+    // Polling is not animation. An unchanged history/gallery/statistics page
+    // must not repaint its native children at 5 Hz through WS_EX_COMPOSITED.
+    const auto data = service->Data();
+    const auto issue = service->Issue();
+    if (data != last_data || issue != last_issue) {
+      if (PracticePage() || issue != last_issue || data["recordKeys"] != last_data["recordKeys"] ||
+          data["recordActivity"] != last_data["recordActivity"]) {
+        Build(); // History rows and recovery controls may have changed.
+      } else {
+        last_data = data;
+        last_issue = issue;
+        InvalidateRect(hwnd, nullptr, FALSE);
+      }
+    }
   }
   void Highlight() {
     if (!target || !last_states.is_array()) return;

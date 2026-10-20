@@ -688,13 +688,18 @@ struct ExtensionPages::Impl {
     const auto data = service->Data();
     const auto issue = service->Issue();
     if (data != last_data || issue != last_issue) {
-      if (PracticePage() || issue != last_issue || data["recordKeys"] != last_data["recordKeys"] ||
-          data["recordActivity"] != last_data["recordActivity"]) {
+      const bool history = PracticePage();
+      if (issue != last_issue ||
+          (history && data["results"] != last_data["results"]) ||
+          (!history && (data["recordKeys"] != last_data["recordKeys"] ||
+                        data["recordActivity"] != last_data["recordActivity"]))) {
         Build(); // History rows and recovery controls may have changed.
       } else {
         last_data = data;
         last_issue = issue;
-        InvalidateRect(hwnd, nullptr, FALSE);
+        // Daily typing does not change practice history. Keep its comparison
+        // dropdown and native controls intact while unrelated stats arrive.
+        if (!history) InvalidateRect(hwnd, nullptr, FALSE);
       }
     }
   }

@@ -6,149 +6,31 @@
   },
   "files": [
     {
-      "source": "native/android-core/ChordData.java",
-      "destination": "platforms/android/core/src/main/java/org/scholay/rimes/core/ChordData.java",
+      "source": "native/shared/AIPoem.swift",
+      "destination": "Shared/Sources/RimesCore/AIPoem.swift",
+      "plugins": [
+        "builtin.poem"
+      ]
+    },
+    {
+      "source": "native/shared/Chord.swift",
+      "destination": "Shared/Sources/RimesCore/Chord.swift",
       "plugins": [
         "builtin.fly-chord-learning"
       ]
     },
     {
-      "source": "native/android-core/ChordGesture.java",
-      "destination": "platforms/android/core/src/main/java/org/scholay/rimes/core/ChordGesture.java",
+      "source": "native/shared/ChordEncoding.swift",
+      "destination": "Shared/Sources/RimesCore/ChordEncoding.swift",
       "plugins": [
         "builtin.fly-chord-learning"
       ]
     },
     {
-      "source": "native/android-core/ChordLayout.java",
-      "destination": "platforms/android/core/src/main/java/org/scholay/rimes/core/ChordLayout.java",
+      "source": "native/shared/TextArt.swift",
+      "destination": "Shared/Sources/RimesCore/TextArt.swift",
       "plugins": [
-        "builtin.fly-chord-learning"
-      ]
-    },
-    {
-      "source": "native/android-core/ChordProfile.java",
-      "destination": "platforms/android/core/src/main/java/org/scholay/rimes/core/ChordProfile.java",
-      "plugins": [
-        "builtin.fly-chord-learning"
-      ]
-    },
-    {
-      "source": "native/android/BufferPluginExecutor.java",
-      "destination": "platforms/android/app/src/main/java/org/scholay/rimes/android/BufferPluginExecutor.java",
-      "plugins": [
-        "builtin.apple-translation",
-        "builtin.ask",
-        "builtin.polisher",
-        "builtin.poem",
         "builtin.art"
-      ]
-    },
-    {
-      "source": "native/android/BufferPluginPanel.java",
-      "destination": "platforms/android/app/src/main/java/org/scholay/rimes/android/BufferPluginPanel.java",
-      "plugins": [
-        "builtin.apple-translation",
-        "builtin.ask",
-        "builtin.polisher",
-        "builtin.poem",
-        "builtin.art"
-      ]
-    },
-    {
-      "source": "native/android/ChordPreview.java",
-      "destination": "platforms/android/app/src/main/java/org/scholay/rimes/android/ChordPreview.java",
-      "plugins": [
-        "builtin.fly-chord-learning"
-      ]
-    },
-    {
-      "source": "native/android/ChordSurface.java",
-      "destination": "platforms/android/app/src/main/java/org/scholay/rimes/android/ChordSurface.java",
-      "plugins": [
-        "builtin.fly-chord-learning"
-      ]
-    },
-    {
-      "source": "native/android/OfflineDictionary.java",
-      "destination": "platforms/android/app/src/main/java/org/scholay/rimes/android/OfflineDictionary.java",
-      "plugins": [
-        "builtin.apple-translation",
-        "builtin.ask",
-        "builtin.polisher",
-        "builtin.poem",
-        "builtin.art"
-      ]
-    },
-    {
-      "source": "native/android/OpenAiChatCodec.java",
-      "destination": "platforms/android/app/src/main/java/org/scholay/rimes/android/OpenAiChatCodec.java",
-      "plugins": [
-        "builtin.apple-translation",
-        "builtin.ask",
-        "builtin.polisher",
-        "builtin.poem",
-        "builtin.art"
-      ]
-    },
-    {
-      "source": "native/ios/Support/BufferPlugins.swift",
-      "destination": "platforms/ios/Support/BufferPlugins.swift",
-      "plugins": [
-        "builtin.apple-translation",
-        "builtin.ask",
-        "builtin.polisher",
-        "builtin.poem",
-        "builtin.art"
-      ]
-    },
-    {
-      "source": "native/linux/translation/NOTICE.md",
-      "destination": "platforms/linux/translation/NOTICE.md",
-      "plugins": [
-        "builtin.apple-translation"
-      ]
-    },
-    {
-      "source": "native/linux/translation/resources.lock.json",
-      "destination": "platforms/linux/translation/resources.lock.json",
-      "plugins": [
-        "builtin.apple-translation"
-      ]
-    },
-    {
-      "source": "native/linux/translation/runtime.py",
-      "destination": "platforms/linux/translation/runtime.py",
-      "plugins": [
-        "builtin.apple-translation"
-      ]
-    },
-    {
-      "source": "native/linux/translation/test_runtime.py",
-      "destination": "platforms/linux/translation/test_runtime.py",
-      "plugins": [
-        "builtin.apple-translation"
-      ]
-    },
-    {
-      "source": "native/linux/translation/units.cpp",
-      "destination": "platforms/linux/translation/units.cpp",
-      "plugins": [
-        "builtin.apple-translation"
-      ]
-    },
-    {
-      "source": "native/linux/translation/units.hpp",
-      "destination": "platforms/linux/translation/units.hpp",
-      "plugins": [
-        "builtin.apple-translation"
-      ]
-    },
-    {
-      "source": "native/linux/translation/units_tests.cpp",
-      "destination": "platforms/linux/translation/units_tests.cpp",
-      "plugins": [
-        "builtin.apple-translation"
       ]
     },
     {
@@ -369,27 +251,6 @@
       ]
     },
     {
-      "source": "native/macos/Resources/Music/AVL-README.txt",
-      "destination": "Sources/RimeBuffer/Resources/Music/AVL-README.txt",
-      "plugins": [
-        "builtin.music"
-      ]
-    },
-    {
-      "source": "native/macos/Resources/Music/Black_Pearl_4_LV2.sf2",
-      "destination": "Sources/RimeBuffer/Resources/Music/Black_Pearl_4_LV2.sf2",
-      "plugins": [
-        "builtin.music"
-      ]
-    },
-    {
-      "source": "native/macos/Resources/Music/provenance.json",
-      "destination": "Sources/RimeBuffer/Resources/Music/provenance.json",
-      "plugins": [
-        "builtin.music"
-      ]
-    },
-    {
       "source": "native/macos/ScholayAcademicPlugins.swift",
       "destination": "Sources/RimeBuffer/ScholayAcademicPlugins.swift",
       "plugins": [
@@ -493,6 +354,181 @@
       ]
     },
     {
+      "source": "native/android/BufferPluginExecutor.java",
+      "destination": "platforms/android/app/src/main/java/org/scholay/rimes/android/BufferPluginExecutor.java",
+      "plugins": [
+        "builtin.apple-translation",
+        "builtin.ask",
+        "builtin.polisher",
+        "builtin.poem",
+        "builtin.art"
+      ]
+    },
+    {
+      "source": "native/android/BufferPluginPanel.java",
+      "destination": "platforms/android/app/src/main/java/org/scholay/rimes/android/BufferPluginPanel.java",
+      "plugins": [
+        "builtin.apple-translation",
+        "builtin.ask",
+        "builtin.polisher",
+        "builtin.poem",
+        "builtin.art"
+      ]
+    },
+    {
+      "source": "native/android/ChordPreview.java",
+      "destination": "platforms/android/app/src/main/java/org/scholay/rimes/android/ChordPreview.java",
+      "plugins": [
+        "builtin.fly-chord-learning"
+      ]
+    },
+    {
+      "source": "native/android/ChordSurface.java",
+      "destination": "platforms/android/app/src/main/java/org/scholay/rimes/android/ChordSurface.java",
+      "plugins": [
+        "builtin.fly-chord-learning"
+      ]
+    },
+    {
+      "source": "native/android/OfflineDictionary.java",
+      "destination": "platforms/android/app/src/main/java/org/scholay/rimes/android/OfflineDictionary.java",
+      "plugins": [
+        "builtin.apple-translation",
+        "builtin.ask",
+        "builtin.polisher",
+        "builtin.poem",
+        "builtin.art"
+      ]
+    },
+    {
+      "source": "native/android/OpenAiChatCodec.java",
+      "destination": "platforms/android/app/src/main/java/org/scholay/rimes/android/OpenAiChatCodec.java",
+      "plugins": [
+        "builtin.apple-translation",
+        "builtin.ask",
+        "builtin.polisher",
+        "builtin.poem",
+        "builtin.art"
+      ]
+    },
+    {
+      "source": "native/ios/Support/BufferPlugins.swift",
+      "destination": "platforms/ios/Support/BufferPlugins.swift",
+      "plugins": [
+        "builtin.apple-translation",
+        "builtin.ask",
+        "builtin.polisher",
+        "builtin.poem",
+        "builtin.art"
+      ]
+    },
+    {
+      "source": "native/macos/Resources/Music/AVL-README.txt",
+      "destination": "Sources/RimeBuffer/Resources/Music/AVL-README.txt",
+      "plugins": [
+        "builtin.music"
+      ]
+    },
+    {
+      "source": "native/macos/Resources/Music/Black_Pearl_4_LV2.sf2",
+      "destination": "Sources/RimeBuffer/Resources/Music/Black_Pearl_4_LV2.sf2",
+      "plugins": [
+        "builtin.music"
+      ]
+    },
+    {
+      "source": "native/macos/Resources/Music/provenance.json",
+      "destination": "Sources/RimeBuffer/Resources/Music/provenance.json",
+      "plugins": [
+        "builtin.music"
+      ]
+    },
+    {
+      "source": "native/android-core/ChordGesture.java",
+      "destination": "platforms/android/core/src/main/java/org/scholay/rimes/core/ChordGesture.java",
+      "plugins": [
+        "builtin.fly-chord-learning"
+      ]
+    },
+    {
+      "source": "native/android-core/ChordProfile.java",
+      "destination": "platforms/android/core/src/main/java/org/scholay/rimes/core/ChordProfile.java",
+      "plugins": [
+        "builtin.fly-chord-learning"
+      ]
+    },
+    {
+      "source": "native/android-core/ChordData.java",
+      "destination": "platforms/android/core/src/main/java/org/scholay/rimes/core/ChordData.java",
+      "plugins": [
+        "builtin.fly-chord-learning"
+      ]
+    },
+    {
+      "source": "native/android-core/ChordLayout.java",
+      "destination": "platforms/android/core/src/main/java/org/scholay/rimes/core/ChordLayout.java",
+      "plugins": [
+        "builtin.fly-chord-learning"
+      ]
+    },
+    {
+      "source": "native/windows/official_features.hpp",
+      "destination": "platforms/windows/native/src/workbench/official_features.hpp",
+      "plugins": [
+        "builtin.openai-compatible",
+        "builtin.apple-translation",
+        "builtin.fly-chord-learning",
+        "builtin.statistics",
+        "builtin.typing-speed"
+      ]
+    },
+    {
+      "source": "native/windows/metrics.hpp",
+      "destination": "platforms/windows/native/src/workbench/metrics.hpp",
+      "plugins": [
+        "builtin.statistics",
+        "builtin.typing-speed"
+      ]
+    },
+    {
+      "source": "native/windows/metrics.cpp",
+      "destination": "platforms/windows/native/src/workbench/metrics.cpp",
+      "plugins": [
+        "builtin.statistics",
+        "builtin.typing-speed"
+      ]
+    },
+    {
+      "source": "native/windows/metrics_articles.cpp",
+      "destination": "platforms/windows/native/src/workbench/metrics_articles.cpp",
+      "plugins": [
+        "builtin.typing-speed"
+      ]
+    },
+    {
+      "source": "native/windows/metrics_ui.hpp",
+      "destination": "platforms/windows/native/src/workbench/metrics_ui.hpp",
+      "plugins": [
+        "builtin.statistics",
+        "builtin.typing-speed"
+      ]
+    },
+    {
+      "source": "native/windows/metrics_ui.cpp",
+      "destination": "platforms/windows/native/src/workbench/metrics_ui.cpp",
+      "plugins": [
+        "builtin.statistics",
+        "builtin.typing-speed"
+      ]
+    },
+    {
+      "source": "native/windows/my_combo.schema.yaml",
+      "destination": "platforms/windows/native/resources/my_combo.schema.yaml",
+      "plugins": [
+        "builtin.fly-chord-learning"
+      ]
+    },
+    {
       "source": "native/shared-python/local_translation.py",
       "destination": "platforms/windows/translation/translate.py",
       "plugins": [
@@ -507,57 +543,64 @@
       ]
     },
     {
-      "source": "native/shared/AIPoem.swift",
-      "destination": "Shared/Sources/RimesCore/AIPoem.swift",
+      "source": "native/linux/translation/runtime.py",
+      "destination": "platforms/linux/translation/runtime.py",
       "plugins": [
-        "builtin.poem"
+        "builtin.apple-translation"
       ]
     },
     {
-      "source": "native/shared/Chord.swift",
-      "destination": "Shared/Sources/RimesCore/Chord.swift",
+      "source": "native/linux/translation/resources.lock.json",
+      "destination": "platforms/linux/translation/resources.lock.json",
       "plugins": [
-        "builtin.fly-chord-learning"
+        "builtin.apple-translation"
       ]
     },
     {
-      "source": "native/shared/ChordEncoding.swift",
-      "destination": "Shared/Sources/RimesCore/ChordEncoding.swift",
+      "source": "native/linux/translation/NOTICE.md",
+      "destination": "platforms/linux/translation/NOTICE.md",
       "plugins": [
-        "builtin.fly-chord-learning"
+        "builtin.apple-translation"
       ]
     },
     {
-      "source": "native/shared/TextArt.swift",
-      "destination": "Shared/Sources/RimesCore/TextArt.swift",
+      "source": "native/linux/translation/test_runtime.py",
+      "destination": "platforms/linux/translation/test_runtime.py",
       "plugins": [
-        "builtin.art"
+        "builtin.apple-translation"
       ]
     },
     {
-      "source": "native/shared/chord/chord_core.cpp",
-      "destination": "platforms/linux/chord/core/chord_core.cpp",
+      "source": "native/linux/translation/units.hpp",
+      "destination": "platforms/linux/translation/units.hpp",
       "plugins": [
-        "builtin.fly-chord-learning"
+        "builtin.apple-translation"
       ]
     },
     {
-      "source": "native/shared/chord/chord_core.hpp",
-      "destination": "platforms/linux/chord/core/chord_core.hpp",
+      "source": "native/linux/translation/units.cpp",
+      "destination": "platforms/linux/translation/units.cpp",
       "plugins": [
-        "builtin.fly-chord-learning"
+        "builtin.apple-translation"
       ]
     },
     {
-      "source": "native/shared/openai/chat_codec.cpp",
-      "destination": "platforms/linux/ai/chat_codec.cpp",
+      "source": "native/linux/translation/units_tests.cpp",
+      "destination": "platforms/linux/translation/units_tests.cpp",
       "plugins": [
-        "builtin.openai-compatible"
+        "builtin.apple-translation"
       ]
     },
     {
       "source": "native/shared/openai/chat_codec.hpp",
       "destination": "platforms/linux/ai/chat_codec.hpp",
+      "plugins": [
+        "builtin.openai-compatible"
+      ]
+    },
+    {
+      "source": "native/shared/openai/chat_codec.cpp",
+      "destination": "platforms/linux/ai/chat_codec.cpp",
       "plugins": [
         "builtin.openai-compatible"
       ]
@@ -570,10 +613,17 @@
       ]
     },
     {
-      "source": "native/shared/statistics/metrics_core.cpp",
-      "destination": "platforms/linux/statistics/core/metrics_core.cpp",
+      "source": "native/shared/chord/chord_core.hpp",
+      "destination": "platforms/linux/chord/core/chord_core.hpp",
       "plugins": [
-        "builtin.statistics"
+        "builtin.fly-chord-learning"
+      ]
+    },
+    {
+      "source": "native/shared/chord/chord_core.cpp",
+      "destination": "platforms/linux/chord/core/chord_core.cpp",
+      "plugins": [
+        "builtin.fly-chord-learning"
       ]
     },
     {
@@ -584,10 +634,10 @@
       ]
     },
     {
-      "source": "native/shared/typing-practice/typing_practice_core.cpp",
-      "destination": "platforms/linux/typing-practice/core/typing_practice_core.cpp",
+      "source": "native/shared/statistics/metrics_core.cpp",
+      "destination": "platforms/linux/statistics/core/metrics_core.cpp",
       "plugins": [
-        "builtin.typing-speed"
+        "builtin.statistics"
       ]
     },
     {
@@ -598,59 +648,9 @@
       ]
     },
     {
-      "source": "native/windows/metrics.cpp",
-      "destination": "platforms/windows/native/src/workbench/metrics.cpp",
+      "source": "native/shared/typing-practice/typing_practice_core.cpp",
+      "destination": "platforms/linux/typing-practice/core/typing_practice_core.cpp",
       "plugins": [
-        "builtin.statistics",
-        "builtin.typing-speed"
-      ]
-    },
-    {
-      "source": "native/windows/metrics.hpp",
-      "destination": "platforms/windows/native/src/workbench/metrics.hpp",
-      "plugins": [
-        "builtin.statistics",
-        "builtin.typing-speed"
-      ]
-    },
-    {
-      "source": "native/windows/metrics_articles.cpp",
-      "destination": "platforms/windows/native/src/workbench/metrics_articles.cpp",
-      "plugins": [
-        "builtin.typing-speed"
-      ]
-    },
-    {
-      "source": "native/windows/metrics_ui.cpp",
-      "destination": "platforms/windows/native/src/workbench/metrics_ui.cpp",
-      "plugins": [
-        "builtin.statistics",
-        "builtin.typing-speed"
-      ]
-    },
-    {
-      "source": "native/windows/metrics_ui.hpp",
-      "destination": "platforms/windows/native/src/workbench/metrics_ui.hpp",
-      "plugins": [
-        "builtin.statistics",
-        "builtin.typing-speed"
-      ]
-    },
-    {
-      "source": "native/windows/my_combo.schema.yaml",
-      "destination": "platforms/windows/native/resources/my_combo.schema.yaml",
-      "plugins": [
-        "builtin.fly-chord-learning"
-      ]
-    },
-    {
-      "source": "native/windows/official_features.hpp",
-      "destination": "platforms/windows/native/src/workbench/official_features.hpp",
-      "plugins": [
-        "builtin.openai-compatible",
-        "builtin.apple-translation",
-        "builtin.fly-chord-learning",
-        "builtin.statistics",
         "builtin.typing-speed"
       ]
     }

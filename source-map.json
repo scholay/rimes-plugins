@@ -295,7 +295,10 @@
     },
     {
       "source": "native/macos/Translation/AppleTranslationAvailabilityGate.swift",
-      "destination": "Sources/RimeBuffer/Translation/AppleTranslationAvailabilityGate.swift"
+      "destination": "Sources/RimeBuffer/Translation/AppleTranslationAvailabilityGate.swift",
+      "plugins": [
+        "builtin.apple-translation"
+      ]
     },
     {
       "source": "native/macos/Translation/AppleTranslationSessionBridge.swift",

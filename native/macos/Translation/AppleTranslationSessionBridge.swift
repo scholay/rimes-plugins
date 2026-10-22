@@ -153,6 +153,10 @@ final class AppleTranslationStringService {
 
     var sourceLanguageID: String
     var targetLanguageID: String
+    /// Whether a missing language pack may raise macOS's download sheet.
+    /// False for ordinary translation, which must never interrupt typing; the
+    /// settings pane's explicit download button is the one caller that sets it.
+    var allowsDownloadPrompt = false
 
     /// An empty source language asks the framework to detect it.
     init(sourceLanguageID: String = "", targetLanguageID: String = "zh-Hans") {
@@ -179,6 +183,37 @@ final class AppleTranslationStringService {
                       target ?? targetLanguageID,
                       completion))
         drain()
+    }
+
+    /// The explicit, person-requested download of both packs for a pair. This
+    /// is the only path allowed to raise macOS's download sheet.
+    func downloadLanguages(source: String,
+                           target: String,
+                           completion: @escaping (Result<Void, Failure>) -> Void) {
+        dispatchPrecondition(condition: .onQueue(.main))
+        guard !busy else {
+            completion(.failure(.failed("正在翻译，请稍后再试")))
+            return
+        }
+        busy = true
+        bridge.submit(sourceLanguageID: source,
+                      targetLanguageID: target) { [weak self] session in
+            let result: Result<Void, Failure>
+            do {
+                try await session.prepareTranslation()
+                result = .success(())
+            } catch is CancellationError {
+                result = .failure(.superseded)
+            } catch {
+                result = .failure(.failed(error.localizedDescription))
+            }
+            await MainActor.run {
+                guard let self else { return }
+                self.busy = false
+                completion(result)
+                self.drain()
+            }
+        }
     }
 
     func cancelAll() {
@@ -215,8 +250,16 @@ final class AppleTranslationStringService {
                          completion: completion)
             return
         }
+        if !allowsDownloadPrompt {
+            let verdict = await AppleTranslationAvailabilityGate.verdict(
+                for: session, sampleText: text)
+            if let message = AppleTranslationAvailabilityGate.message(for: verdict) {
+                await finish(.failure(.failed(message)), completion: completion)
+                return
+            }
+        }
         do {
-            try await session.prepareTranslation()
+            if allowsDownloadPrompt { try await session.prepareTranslation() }
             try Task.checkCancellation()
             let response = try await session.translate(text)
             try Task.checkCancellation()

@@ -1096,6 +1096,11 @@ final class AppleTranslationWorkspace {
         if raw.hasPrefix("AI 翻译") {
             return raw
         }
+        if #available(macOS 15.0, *),
+           raw == AppleTranslationAvailabilityGate.needsDownloadMessage
+            || raw == AppleTranslationAvailabilityGate.unsupportedMessage {
+            return raw
+        }
         let lower = raw.lowercased()
         if lower.contains("cancel") || raw.contains("取消") {
             return "翻译已取消"
@@ -1329,8 +1334,15 @@ private final class AppleTranslationBridgeModel {
             await abort(job, message: "本地翻译会话的语言与请求不一致")
             return
         }
+        // Never let macOS raise its language-pack sheet over the field being
+        // typed in: a missing pack is reported in the rail instead.
+        let verdict = await AppleTranslationAvailabilityGate.verdict(
+            for: session, sampleText: job.sourceText)
+        if let message = AppleTranslationAvailabilityGate.message(for: verdict) {
+            await abort(job, message: message)
+            return
+        }
         do {
-            try await session.prepareTranslation()
             try Task.checkCancellation()
             guard await isCurrent(job) else { return }
             guard await sessionMatches(session) else {
@@ -1388,7 +1400,44 @@ final class AppleTranslationSettingsViewController: NSViewController {
         action: nil
     )
     private let statusLabel = NSTextField(wrappingLabelWithString: "")
+    private let downloadButton = RimePointingHandButton(
+        title: "下载语言包",
+        target: nil,
+        action: nil
+    )
+    private let downloadStatus = NSTextField(labelWithString: "")
+    private var downloadService: Any?
     private var observer: NSObjectProtocol?
+
+    @available(macOS 15.0, *)
+    private func downloadHost() -> NSView? {
+        let service = AppleTranslationStringService()
+        downloadService = service
+        let host = service.makeHostView()
+        host.widthAnchor.constraint(equalToConstant: 1).isActive = true
+        host.heightAnchor.constraint(equalToConstant: 1).isActive = true
+        return host
+    }
+
+    @objc private func downloadTapped() {
+        guard #available(macOS 15.0, *),
+              let service = downloadService as? AppleTranslationStringService else { return }
+        let workspace = AppleTranslationWorkspace.shared
+        downloadButton.isEnabled = false
+        downloadStatus.stringValue = "正在请求下载…"
+        service.downloadLanguages(
+            source: workspace.sourceLanguageID,
+            target: workspace.targetLanguageID
+        ) { [weak self] result in
+            guard let self else { return }
+            self.downloadButton.isEnabled = true
+            switch result {
+            case .success: self.downloadStatus.stringValue = "语言包已就绪"
+            case .failure(.superseded): self.downloadStatus.stringValue = ""
+            case .failure: self.downloadStatus.stringValue = "下载未完成"
+            }
+        }
+    }
 
     override func loadView() {
         sourcePopup.target = self
@@ -1416,13 +1465,25 @@ final class AppleTranslationSettingsViewController: NSViewController {
         let heading = NSTextField(labelWithString: "实时翻译")
         heading.font = .systemFont(ofSize: 20, weight: .semibold)
         let privacy = NSTextField(wrappingLabelWithString:
-            "原文和译文只保留在当前输入法进程中。首次使用某个语言组合时，macOS 可能请求下载对应的本地语言包。")
+            "原文和译文只保留在当前输入法进程中。翻译时不会弹出任何系统窗口；某个语言组合首次使用前，请先在此下载对应的本地语言包。")
         privacy.font = .systemFont(ofSize: 11)
         privacy.textColor = .tertiaryLabelColor
         privacy.maximumNumberOfLines = 0
         privacy.widthAnchor.constraint(equalToConstant: 620).isActive = true
 
-        let column = NSStackView(views: [heading, row, statusLabel, privacy])
+        downloadButton.target = self
+        downloadButton.action = #selector(downloadTapped)
+        downloadStatus.font = .systemFont(ofSize: 11)
+        downloadStatus.textColor = .secondaryLabelColor
+        let downloadRow = NSStackView(views: [downloadButton, downloadStatus])
+        downloadRow.orientation = .horizontal
+        downloadRow.alignment = .centerY
+        downloadRow.spacing = 8
+        var views: [NSView] = [heading, row, statusLabel, downloadRow, privacy]
+        if #available(macOS 15.0, *), let host = downloadHost() {
+            views.append(host)
+        }
+        let column = NSStackView(views: views)
         column.orientation = .vertical
         column.alignment = .leading
         column.spacing = 12

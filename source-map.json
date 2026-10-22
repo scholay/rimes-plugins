@@ -294,6 +294,13 @@
       ]
     },
     {
+      "source": "native/macos/Translation/AppleTranslationAvailabilityGate.swift",
+      "destination": "Sources/RimeBuffer/Translation/AppleTranslationAvailabilityGate.swift",
+      "plugins": [
+        "builtin.apple-translation"
+      ]
+    },
+    {
       "source": "native/macos/Translation/AppleTranslationSessionBridge.swift",
       "destination": "Sources/RimeBuffer/Translation/AppleTranslationSessionBridge.swift",
       "plugins": [
@@ -481,27 +488,41 @@
     {
       "source": "native/windows/metrics.hpp",
       "destination": "platforms/windows/native/src/workbench/metrics.hpp",
-      "plugins": ["builtin.statistics", "builtin.typing-speed"]
+      "plugins": [
+        "builtin.statistics",
+        "builtin.typing-speed"
+      ]
     },
     {
       "source": "native/windows/metrics.cpp",
       "destination": "platforms/windows/native/src/workbench/metrics.cpp",
-      "plugins": ["builtin.statistics", "builtin.typing-speed"]
+      "plugins": [
+        "builtin.statistics",
+        "builtin.typing-speed"
+      ]
     },
     {
       "source": "native/windows/metrics_articles.cpp",
       "destination": "platforms/windows/native/src/workbench/metrics_articles.cpp",
-      "plugins": ["builtin.typing-speed"]
+      "plugins": [
+        "builtin.typing-speed"
+      ]
     },
     {
       "source": "native/windows/metrics_ui.hpp",
       "destination": "platforms/windows/native/src/workbench/metrics_ui.hpp",
-      "plugins": ["builtin.statistics", "builtin.typing-speed"]
+      "plugins": [
+        "builtin.statistics",
+        "builtin.typing-speed"
+      ]
     },
     {
       "source": "native/windows/metrics_ui.cpp",
       "destination": "platforms/windows/native/src/workbench/metrics_ui.cpp",
-      "plugins": ["builtin.statistics", "builtin.typing-speed"]
+      "plugins": [
+        "builtin.statistics",
+        "builtin.typing-speed"
+      ]
     },
     {
       "source": "native/windows/my_combo.schema.yaml",

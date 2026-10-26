@@ -2,11 +2,13 @@ import AppKit
 import Carbon
 import CryptoKit
 import Foundation
+import UniformTypeIdentifiers
 
 /// Owns one local article editor. Persisted results contain metrics, not text.
 final class TypingSpeedSettingsViewController: NSViewController, TypingPracticeTelemetrySink {
     private let isHistory: Bool
     private let historyStore: TypingTestHistoryStore
+    private let library: TypingTestLibraryStore
     private let contextProvider: (() -> TypingTestContext)?
     private let clockProvider: () -> TimeInterval
     private let telemetryEnabled: Bool
@@ -18,12 +20,16 @@ final class TypingSpeedSettingsViewController: NSViewController, TypingPracticeT
     private var latestSnapshot: TypingTestSnapshot?
     private var isArmed = false
     private var isStopping = false
+    private var isImporting = false
     private var selectedArticle = TypingTestArticles.defaultArticle
     private var frozenSourceID: String?
-    private let articlePicker = NSPopUpButton(frame: .zero, pullsDown: false)
+    private static let lastArticleKey = "TypingTest.lastArticleID"
+    private lazy var materials = TypingTestMaterialColumn(library: library)
+    private weak var pageScroll: TypingTestPageScrollView?
     private let contextPicker = NSPopUpButton(frame: .zero, pullsDown: false)
     private let startButton = RimePointingHandButton(title: "开始跟打", target: nil, action: nil)
     private let finishButton = RimePointingHandButton(title: "结束", target: nil, action: nil)
+    private let articleTitle = NSTextField(labelWithString: "")
     private let statusLabel = NSTextField(labelWithString: "")
     private let articleDetail = NSTextField(labelWithString: "")
     private let progressLabel = NSTextField(labelWithString: "0%")
@@ -31,10 +37,10 @@ final class TypingSpeedSettingsViewController: NSViewController, TypingPracticeT
     private let progress = NSProgressIndicator()
     private let targetText = NSTextView(frame: .zero)
     private let editor = TypingTestTextView(frame: .zero, textContainer: nil)
-    private let speedCard = MetricsValueCard(title: "有效速度", symbolName: "speedometer")
-    private let keysCard = MetricsValueCard(title: "击键", symbolName: "keyboard")
-    private let backspaceCard = MetricsValueCard(title: "回退", symbolName: "delete.left")
-    private let accuracyCard = MetricsValueCard(title: "过程正确率", symbolName: "scope")
+    private let speedCard = TypingTestStatTile(title: "有效速度", symbolName: "speedometer")
+    private let keysCard = TypingTestStatTile(title: "击键", symbolName: "keyboard")
+    private let backspaceCard = TypingTestStatTile(title: "回退", symbolName: "delete.left")
+    private let accuracyCard = TypingTestStatTile(title: "正确率", symbolName: "scope")
     private let speedChart = MetricsLineChartView()
     private let resultStack = NSStackView()
     private let historyRows = NSStackView()
@@ -46,11 +52,13 @@ final class TypingSpeedSettingsViewController: NSViewController, TypingPracticeT
     private var renderedTargetStates: [TypingTestCharacterState]?
 
     init(subpageID: String, historyStore: TypingTestHistoryStore = .shared,
+         library: TypingTestLibraryStore = .shared,
          contextProvider: (() -> TypingTestContext)? = nil,
          clockProvider: @escaping () -> TimeInterval = { ProcessInfo.processInfo.systemUptime },
          telemetryEnabled: Bool = true) {
         isHistory = subpageID == "history"
         self.historyStore = historyStore
+        self.library = library
         self.contextProvider = contextProvider
         self.clockProvider = clockProvider
         self.telemetryEnabled = telemetryEnabled
@@ -66,38 +74,67 @@ final class TypingSpeedSettingsViewController: NSViewController, TypingPracticeT
     }
 
     override func loadView() {
-        let content = NSStackView()
-        content.orientation = .vertical
-        content.alignment = .leading
-        content.spacing = 14
-        content.edgeInsets = NSEdgeInsets(top: 24, left: 26, bottom: 28, right: 26)
-        content.translatesAutoresizingMaskIntoConstraints = false
         configureControls()
-        if isHistory { buildHistory(in: content) } else { buildPractice(in: content) }
+        let right = NSStackView()
+        right.orientation = .vertical
+        right.alignment = .leading
+        right.distribution = .fill
+        right.spacing = 10
+        right.edgeInsets = NSEdgeInsets(top: 14, left: 18, bottom: 14, right: 18)
+        right.translatesAutoresizingMaskIntoConstraints = false
+        if isHistory { buildHistory(in: right) } else { buildPractice(in: right) }
         storageWarning.font = .systemFont(ofSize: 11)
         storageWarning.textColor = RimeUI.warningTextColor
         storageWarning.isHidden = true
-        content.addArrangedSubview(storageWarning)
-        content.arrangedSubviews.forEach {
-            $0.widthAnchor.constraint(equalTo: content.widthAnchor, constant: -52).isActive = true
-        }
+        add(storageWarning, to: right)
+
         let document = TypingTestDocumentView()
         document.onDetach = { [weak self] in self?.interrupt(reason: .interrupted, message: "已离开跟打页 · 本次记为练习") }
-        document.addSubview(content)
+        let divider = TypingTestDividerView()
+        for subview in [materials, divider, right] {
+            subview.translatesAutoresizingMaskIntoConstraints = false
+            document.addSubview(subview)
+        }
         NSLayoutConstraint.activate([
-            content.leadingAnchor.constraint(equalTo: document.leadingAnchor),
-            content.trailingAnchor.constraint(equalTo: document.trailingAnchor),
-            content.topAnchor.constraint(equalTo: document.topAnchor),
-            content.bottomAnchor.constraint(equalTo: document.bottomAnchor),
+            materials.leadingAnchor.constraint(equalTo: document.leadingAnchor),
+            materials.topAnchor.constraint(equalTo: document.topAnchor),
+            materials.bottomAnchor.constraint(equalTo: document.bottomAnchor),
+            divider.leadingAnchor.constraint(equalTo: materials.trailingAnchor),
+            divider.topAnchor.constraint(equalTo: document.topAnchor),
+            divider.bottomAnchor.constraint(equalTo: document.bottomAnchor),
+            divider.widthAnchor.constraint(equalToConstant: 1),
+            right.leadingAnchor.constraint(equalTo: divider.trailingAnchor),
+            right.trailingAnchor.constraint(equalTo: document.trailingAnchor),
+            right.topAnchor.constraint(equalTo: document.topAnchor),
+            right.bottomAnchor.constraint(equalTo: document.bottomAnchor),
         ])
-        // The settings shell supplies the outer scrolling viewport. Keeping a
-        // plain document preserves its intrinsic height and avoids nested clips.
-        view = document
+        materials.onSelect = { [weak self] in self?.choose($0) }
+        materials.onImport = { [weak self] in self?.importTapped() }
+        materials.onDropFiles = { [weak self] in self?.importFiles($0) }
+        materials.onRemoveBook = { [weak self] in self?.removeBookTapped($0) }
+
+        // The page owns exactly one scroll view. It stretches the content to the
+        // viewport, so the text panels grow with the window and the page only
+        // scrolls when the window is shorter than the content's minimum.
+        let page = TypingTestPageScrollView(document: document,
+                                            minimumHeight: isHistory ? 560 : 540, minimumWidth: 640)
+        pageScroll = page
+        view = page
         view.identifier = NSUserInterfaceItemIdentifier(isHistory ? "typing-test-history" : "typing-test-practice")
+    }
+
+    /// Adds a full-width row to the right-hand column, honouring its insets.
+    private func add(_ row: NSView, to stack: NSStackView, flexible: Bool = false) {
+        stack.addArrangedSubview(row)
+        row.leadingAnchor.constraint(equalTo: stack.leadingAnchor, constant: stack.edgeInsets.left).isActive = true
+        row.trailingAnchor.constraint(equalTo: stack.trailingAnchor, constant: -stack.edgeInsets.right).isActive = true
+        row.setContentHuggingPriority(flexible ? .init(200) : .init(760), for: .vertical)
+        row.setContentCompressionResistancePriority(flexible ? .init(200) : .init(760), for: .vertical)
     }
 
     override func viewDidLoad() {
         super.viewDidLoad()
+        observe(.typingTestLibraryDidChange) { [weak self] _ in self?.materials.reload() }
         observe(.typingTestHistoryDidChange) { [weak self] _ in
             guard let self, self.isHistory else { return }
             self.refreshHistory(rebuildContexts: true)
@@ -126,6 +163,9 @@ final class TypingSpeedSettingsViewController: NSViewController, TypingPracticeT
                   RimeInputSourceAuthority.currentInputSourceID() != self.frozenSourceID else { return }
             self.interrupt(reason: .inputSourceChanged, message: "输入源已改变 · 本次记为练习")
         }
+        if telemetryEnabled, let id = UserDefaults.standard.string(forKey: Self.lastArticleKey),
+           let remembered = article(id: id) { selectedArticle = remembered }
+        materials.select(articleID: selectedArticle.id)
         if isHistory { refreshHistory(rebuildContexts: true) } else { resetArticle() }
     }
 
@@ -139,14 +179,6 @@ final class TypingSpeedSettingsViewController: NSViewController, TypingPracticeT
     }
 
     private func configureControls() {
-        for article in TypingTestArticles.all {
-            articlePicker.addItem(withTitle: "\(article.title)  ·  \(article.displayLength)")
-            articlePicker.lastItem?.representedObject = article.id
-        }
-        articlePicker.target = self
-        articlePicker.action = #selector(articleChanged)
-        articlePicker.setAccessibilityLabel("选择测速文章")
-        articlePicker.selectItem(at: TypingTestArticles.all.firstIndex { $0.id == selectedArticle.id } ?? 0)
         contextPicker.target = self
         contextPicker.action = #selector(contextChanged)
         contextPicker.setAccessibilityLabel("筛选输入方案与文章版本")
@@ -166,11 +198,21 @@ final class TypingSpeedSettingsViewController: NSViewController, TypingPracticeT
         repairButton.action = #selector(repairHistoryTapped)
         repairButton.bezelStyle = .rounded
         repairButton.isHidden = true
+        articleTitle.font = .systemFont(ofSize: 15, weight: .semibold)
+        articleTitle.textColor = RimeUI.textPrimary
+        articleTitle.lineBreakMode = .byTruncatingTail
+        articleTitle.setContentCompressionResistancePriority(.init(100), for: .horizontal)
+        articleTitle.setContentHuggingPriority(.init(600), for: .horizontal)
         articleDetail.font = .systemFont(ofSize: 11)
         articleDetail.textColor = RimeUI.textSecondary
+        articleDetail.lineBreakMode = .byTruncatingTail
+        articleDetail.setContentCompressionResistancePriority(.init(100), for: .horizontal)
+        articleDetail.setContentHuggingPriority(.init(600), for: .horizontal)
         statusLabel.font = .systemFont(ofSize: 11, weight: .medium)
         statusLabel.textColor = RimeUI.textSecondary
         statusLabel.lineBreakMode = .byTruncatingTail
+        statusLabel.setContentCompressionResistancePriority(.init(100), for: .horizontal)
+        statusLabel.setContentHuggingPriority(.init(600), for: .horizontal)
         timeLabel.font = .monospacedDigitSystemFont(ofSize: 15, weight: .medium)
         progressLabel.font = .monospacedDigitSystemFont(ofSize: 11, weight: .medium)
         progress.isIndeterminate = false
@@ -181,9 +223,10 @@ final class TypingSpeedSettingsViewController: NSViewController, TypingPracticeT
         targetText.isEditable = false
         targetText.isSelectable = true
         targetText.drawsBackground = false
-        targetText.textContainerInset = NSSize(width: 14, height: 12)
+        targetText.textContainerInset = NSSize(width: 12, height: 8)
         targetText.setAccessibilityLabel("跟打原文，绿色为正确，红色为待改，灰色为未输入")
         editor.isEditable = false
+        editor.textContainerInset = NSSize(width: 12, height: 8)
         editor.onPhysicalKey = { [weak self] event in
             guard let self else { return }
             TypingPracticeTelemetry.shared.noteLocalKey(event, textView: self.editor)
@@ -204,69 +247,174 @@ final class TypingSpeedSettingsViewController: NSViewController, TypingPracticeT
         [resultStack, historyRows].forEach {
             $0.orientation = .vertical
             $0.alignment = .leading
-            $0.spacing = 10
+            $0.spacing = 8
         }
         resultDetail.font = .systemFont(ofSize: 11)
         resultDetail.textColor = RimeUI.textSecondary
-        resultDetail.maximumNumberOfLines = 4
+        resultDetail.maximumNumberOfLines = 3
         speedChart.emptyMessage = "开始输入后，速度曲线会在这里生长"
         speedChart.xAxisLabel = isHistory ? "测次" : "用时"
         speedChart.translatesAutoresizingMaskIntoConstraints = false
-        speedChart.heightAnchor.constraint(equalToConstant: 165).isActive = true
     }
 
     private func buildPractice(in content: NSStackView) {
-        let random = iconButton("shuffle", help: "随机选择另一篇文章", action: #selector(randomTapped))
-        articlePicker.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
-        content.addArrangedSubview(row([articlePicker, random, flexible(), startButton, finishButton]))
-        content.addArrangedSubview(articleDetail)
-        content.addArrangedSubview(metricRow([speedCard, keysCard, backspaceCard, accuracyCard]))
-        content.addArrangedSubview(row([statusLabel, flexible(), timeLabel]))
-        content.addArrangedSubview(row([progress, progressLabel]))
-        progress.setContentHuggingPriority(.defaultLow, for: .horizontal)
-        content.addArrangedSubview(textPanel(title: "原文", detail: "正确  /  待改  /  未输入", textView: targetText, height: 202))
-        content.addArrangedSubview(textPanel(title: "输入", detail: "首键计时 · 组字不判错", textView: editor, height: 152))
-        content.addArrangedSubview(resultStack)
+        let random = iconButton("shuffle", help: "在当前书籍或内置文章里随机换一段", action: #selector(randomTapped))
+        let titles = TypingTestTitleBlock(title: articleTitle, detail: articleDetail)
+        add(headerRow(titles, trailing: [random, startButton, finishButton]), to: content)
+        add(metricRow([speedCard, keysCard, backspaceCard, accuracyCard]), to: content)
         resultStack.isHidden = true
-        let speedTrackLabel = label("速度轨迹", size: 12, weight: .semibold)
-        speedTrackLabel.toolTip =
-            "计时含思考与纠错 · 标点逐字对照 · 仅保存成绩，不保存输入正文。"
+        add(resultStack, to: content)
+        progress.translatesAutoresizingMaskIntoConstraints = false
+        progress.widthAnchor.constraint(equalToConstant: 110).isActive = true
+        add(row([statusLabel, flexible(), progress, progressLabel, timeLabel]), to: content)
+        let target = textPanel(title: "原文", hint: "正确 / 待改 / 未输入", textView: targetText)
+        let input = textPanel(title: "输入", hint: "首键计时 · 组字不判错", textView: editor)
+        add(target, to: content, flexible: true)
+        add(input, to: content, flexible: true)
+        // Original text gets the larger share; both stay usable at the minimum size.
+        let share = target.heightAnchor.constraint(equalTo: input.heightAnchor, multiplier: 1.4)
+        share.priority = .init(740)
+        share.isActive = true
+        speedChart.toolTip =
+            "速度轨迹 · 计时含思考与纠错 · 标点逐字对照 · 仅保存成绩，不保存输入正文。"
             + "中文有效速度 = 正确字符 ÷ 总分钟；英文 WPM = 正确字符 ÷ 5 ÷ 总分钟。"
             + "过程正确率保留改正前的错误，最终字准单独展示。"
-        content.addArrangedSubview(speedTrackLabel)
-        content.addArrangedSubview(speedChart)
+        speedChart.setAccessibilityLabel("速度轨迹")
+        speedChart.heightAnchor.constraint(equalToConstant: 88).isActive = true
+        add(speedChart, to: content)
     }
     private func buildHistory(in content: NSStackView) {
-        content.addArrangedSubview(row([articlePicker, flexible(), repairButton, clearButton]))
-        content.addArrangedSubview(contextPicker)
-        content.addArrangedSubview(articleDetail)
-        content.addArrangedSubview(metricRow([speedCard, keysCard, backspaceCard, accuracyCard]))
+        let titles = TypingTestTitleBlock(title: articleTitle, detail: articleDetail)
+        add(headerRow(titles, trailing: [repairButton, clearButton]), to: content)
+        add(contextPicker, to: content)
+        add(metricRow([speedCard, keysCard, backspaceCard, accuracyCard]), to: content)
         historySummary.font = .systemFont(ofSize: 12, weight: .medium)
-        content.addArrangedSubview(historySummary)
+        add(historySummary, to: content)
         speedChart.emptyMessage = "这篇文章还没有成绩，去完成第一次跟打吧"
         speedChart.onSelectSample = { [weak self] id in self?.selectHistoryResult(id: id) }
         speedChart.toolTip = "只比较同篇、同版、同方案；非正式练习不连入成绩曲线。正文不进入历史。"
-        content.addArrangedSubview(speedChart)
-        content.addArrangedSubview(resultStack)
+        speedChart.heightAnchor.constraint(equalToConstant: 140).isActive = true
+        add(speedChart, to: content)
         resultStack.isHidden = true
-        content.addArrangedSubview(historyRows)
+        add(resultStack, to: content)
+        // The list scrolls on its own so a long history never stretches the page.
+        let list = NSScrollView()
+        list.drawsBackground = false
+        list.hasVerticalScroller = true
+        list.autohidesScrollers = true
+        list.borderType = .noBorder
+        let holder = TypingTestFlippedView()
+        holder.translatesAutoresizingMaskIntoConstraints = false
+        historyRows.translatesAutoresizingMaskIntoConstraints = false
+        holder.addSubview(historyRows)
+        list.documentView = holder
+        NSLayoutConstraint.activate([
+            holder.leadingAnchor.constraint(equalTo: list.contentView.leadingAnchor),
+            holder.trailingAnchor.constraint(equalTo: list.contentView.trailingAnchor),
+            holder.topAnchor.constraint(equalTo: list.contentView.topAnchor),
+            historyRows.leadingAnchor.constraint(equalTo: holder.leadingAnchor),
+            historyRows.trailingAnchor.constraint(equalTo: holder.trailingAnchor),
+            historyRows.topAnchor.constraint(equalTo: holder.topAnchor),
+            historyRows.bottomAnchor.constraint(equalTo: holder.bottomAnchor),
+            list.heightAnchor.constraint(greaterThanOrEqualToConstant: 90),
+        ])
+        add(list, to: content, flexible: true)
     }
     private var now: TimeInterval { clockProvider() }
 
-    @objc private func articleChanged() {
-        guard let id = articlePicker.selectedItem?.representedObject as? String,
-              let article = TypingTestArticles.article(id: id) else { return }
-        interrupt(reason: .interrupted, message: "已切换文章")
+    private func article(id: String) -> TypingTestArticle? {
+        TypingTestArticles.article(id: id) ?? library.article(id: id)
+    }
+
+    /// A different material was chosen in the left column (or by shuffle/import).
+    private func choose(_ article: TypingTestArticle) {
+        guard article.id != selectedArticle.id || session != nil else { return }
+        interrupt(reason: .interrupted, message: "已切换素材")
         selectedArticle = article
+        if telemetryEnabled { UserDefaults.standard.set(article.id, forKey: Self.lastArticleKey) }
         if isHistory { refreshHistory(rebuildContexts: true) } else { resetArticle() }
     }
     @objc private func randomTapped() {
-        guard let article = TypingTestArticles.all.filter({ $0.id != selectedArticle.id }).randomElement(),
-              let index = TypingTestArticles.all.firstIndex(where: { $0.id == article.id }) else { return }
-        articlePicker.selectItem(at: index)
-        articleChanged()
+        let pick: TypingTestArticle?
+        let pieces = selectedArticle.id.split(separator: ".")
+        if pieces.count == 3, pieces[0] == "epub", let book = library.book(id: String(pieces[1])), book.passageCount > 1 {
+            pick = (1...book.passageCount).filter { "epub.\(book.id).\($0)" != selectedArticle.id }.randomElement()
+                .flatMap { book.article(number: $0) }
+        } else {
+            pick = TypingTestArticles.all.filter { $0.id != selectedArticle.id }.randomElement()
+        }
+        guard let pick else { return }
+        materials.select(articleID: pick.id)
+        choose(pick)
     }
     @objc private func contextChanged() { refreshHistory(rebuildContexts: false) }
+
+    // MARK: EPUB import
+
+    private func importTapped() {
+        guard !isArmed, !isImporting else { return }
+        let panel = NSOpenPanel()
+        panel.title = "导入 EPUB 电子书"
+        panel.message = "选择一本或多本 .epub 电子书；它们会被切分成可跟打的段落，只保存在本机。"
+        panel.prompt = "导入"
+        panel.allowedContentTypes = UTType(filenameExtension: "epub").map { [$0] } ?? []
+        panel.allowsMultipleSelection = true
+        panel.canChooseDirectories = false
+        let finish: (NSApplication.ModalResponse) -> Void = { [weak self] response in
+            if response == .OK { self?.importFiles(panel.urls) }
+        }
+        if let window = view.window { panel.beginSheetModal(for: window, completionHandler: finish) }
+        else { finish(panel.runModal()) }
+    }
+
+    func importFiles(_ urls: [URL]) {
+        let urls = urls.filter { $0.pathExtension.lowercased() == "epub" }
+        guard !isArmed, !isImporting, !urls.isEmpty else { return }
+        isImporting = true
+        materials.isEditingEnabled = false
+        materials.setStatus("正在导入 \(urls.count) 本…")
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            let parsed = urls.map { url in Result { try TypingTestLibraryStore.parseFile(at: url) } }
+            DispatchQueue.main.async { self?.finishImport(urls: urls, parsed: parsed) }
+        }
+    }
+
+    private func finishImport(urls: [URL], parsed: [Result<TypingTestBook, Error>]) {
+        var added: [TypingTestBook] = []
+        var existing: TypingTestBook?
+        var problems: [String] = []
+        for (url, result) in zip(urls, parsed) {
+            do {
+                switch try library.add(result.get()) {
+                case let .added(book): added.append(book)
+                case let .alreadyPresent(book): existing = book
+                }
+            } catch { problems.append("\(url.lastPathComponent)：\(error.localizedDescription)") }
+        }
+        isImporting = false
+        materials.isEditingEnabled = !isArmed
+        materials.reload()
+        if let book = added.first ?? existing { materials.selectFirstPassage(of: book) }
+        var message = added.map { "已导入《\($0.title)》· \($0.passageCount) 段" }
+        if existing != nil, added.isEmpty { message.append("这本书已在素材里") }
+        message += problems
+        materials.setStatus(message.joined(separator: "\n"))
+        if !isHistory, !isArmed { statusLabel.stringValue = message.first ?? statusLabel.stringValue }
+    }
+
+    private func removeBookTapped(_ book: TypingTestBook) {
+        confirm(title: "移除《\(book.title)》？",
+                detail: "只从本机素材里删除这本书的段落。已保存的跟打成绩会保留，但这些段落的原文不再可选。",
+                button: "移除") { [weak self] in
+            guard let self, self.library.remove(id: book.id) else { return }
+            if self.selectedArticle.id.hasPrefix("epub.\(book.id).") {
+                self.materials.reload()
+                self.materials.select(articleID: TypingTestArticles.defaultArticle.id)
+                self.choose(TypingTestArticles.defaultArticle)
+            }
+            self.materials.setStatus(nil)
+        }
+    }
 
     private func resetArticle() {
         timer?.invalidate(); timer = nil
@@ -274,8 +422,10 @@ final class TypingSpeedSettingsViewController: NSViewController, TypingPracticeT
         editor.acceptsTestInput = false
         editor.isEditable = false
         editor.resetForTest()
+        articleTitle.stringValue = selectedArticle.title
         articleDetail.stringValue = "\(selectedArticle.theme)  ·  \(selectedArticle.difficulty)  ·  \(selectedArticle.displayLength)"
         statusLabel.stringValue = "准备好后开始，第一枚按键触发计时"
+        setResultHeight(visible: false)
         startButton.title = "开始跟打"
         finishButton.isEnabled = false
         resultStack.isHidden = true
@@ -424,7 +574,7 @@ final class TypingSpeedSettingsViewController: NSViewController, TypingPracticeT
         speedCard.update(value: metrics.map { Self.number(english ? $0.wordsPerMinute : $0.effectiveCPM) } ?? "—",
                          unit: english ? "WPM" : "字/分", detail: "正确成文字符 ÷ 总分钟；英文每 5 字符折算一词。")
         keysCard.update(value: metrics.map { String($0.physicalKeyCount) } ?? "—",
-                        unit: metrics.map { "键 · \(Self.number($0.keysPerSecond))/秒" } ?? "键",
+                        unit: "键",
                         detail: metrics.map { "\(Self.number($0.keysPerSecond)) 键/秒；自动重复 \($0.repeatKeyCount) 次" } ?? "物理按键与并击拍数分开计算")
         backspaceCard.update(value: metrics.map { String($0.backspaceCount) } ?? "—", unit: "次",
                              detail: metrics.map { "组字退格 \($0.compositionBackspaceCount) · 上屏退格 \($0.committedBackspaceCount) · 删除 \($0.deletedCharacterCount) 字符" } ?? "组字退格与上屏回改分开记录")
@@ -434,12 +584,14 @@ final class TypingSpeedSettingsViewController: NSViewController, TypingPracticeT
     private func renderResult(_ result: TypingTestResult) {
         clear(resultStack)
         resultStack.isHidden = false
+        setResultHeight(visible: true)
         let metrics = result.metrics
-        let final = MetricsValueCard(title: "最终字准", symbolName: "checkmark.circle")
-        final.update(value: metrics.finalAccuracy.map { Self.number($0 * 100) } ?? "—", unit: "%")
-        let correction = MetricsValueCard(title: "回改", symbolName: "arrow.uturn.backward")
+        let final = TypingTestStatTile(title: "最终字准", symbolName: "checkmark.circle")
+        final.update(value: metrics.finalAccuracy.map { Self.number($0 * 100) } ?? "—", unit: "%",
+                     detail: "正确字符 ÷ (正确 + 替换错误 + 漏字 + 多字)")
+        let correction = TypingTestStatTile(title: "回改", symbolName: "arrow.uturn.backward")
         correction.update(value: String(metrics.correctionCount), unit: "次", detail: "实际删除 \(metrics.deletedCharacterCount) 字符")
-        let chord = MetricsValueCard(title: "并击拍数", symbolName: "waveform.path")
+        let chord = TypingTestStatTile(title: "并击拍数", symbolName: "waveform.path")
         chord.update(value: metrics.chordCount.map(String.init) ?? "—", unit: "拍", detail: "仅记录可信 RIMES 并击事件；缺少数据不当作零。")
         let cards = metricRow([final, correction, chord])
         resultStack.addArrangedSubview(cards)
@@ -448,6 +600,11 @@ final class TypingSpeedSettingsViewController: NSViewController, TypingPracticeT
         resultDetail.toolTip = "文章版本 \(result.articleVersion)；组字退格 \(metrics.compositionBackspaceCount)，上屏退格 \(metrics.committedBackspaceCount)；码长 \(metrics.codeLength.map(Self.number) ?? "—") 键/字。"
         resultStack.addArrangedSubview(resultDetail)
         resultDetail.widthAnchor.constraint(equalTo: resultStack.widthAnchor).isActive = true
+    }
+
+    /// The result row adds height; raise the page minimum instead of squeezing the editor.
+    private func setResultHeight(visible: Bool) {
+        pageScroll?.setMinimumHeight((isHistory ? 560 : 540) + (visible ? 84 : 0))
     }
 
     private func renderTarget(states: [TypingTestCharacterState]) {
@@ -500,9 +657,11 @@ final class TypingSpeedSettingsViewController: NSViewController, TypingPracticeT
         }
         let key = contextPicker.selectedItem?.representedObject as? String
         let results = articleResults.filter { Self.comparisonKey($0) == key }
+        articleTitle.stringValue = selectedArticle.title
         articleDetail.stringValue = "\(selectedArticle.theme) · \(selectedArticle.displayLength) · \(results.count) 次记录"
         updateMetricCards(results.first?.metrics)
         resultStack.isHidden = true
+        setResultHeight(visible: false)
         historySummary.stringValue = results.isEmpty ? "等待你的第一次成绩" : "最近成绩 · \(results.filter(\.isComplete).count) 次完成"
         let visible = Array(results.prefix(30))
         speedChart.unit = selectedArticle.language == .english ? "WPM" : "字/分"
@@ -532,7 +691,7 @@ final class TypingSpeedSettingsViewController: NSViewController, TypingPracticeT
             box.widthAnchor.constraint(equalTo: historyRows.widthAnchor).isActive = true
         }
         if results.isEmpty {
-            let empty = label("在「文章跟打」完成练习后，这里会显示速度趋势与成绩。", size: 12)
+            let empty = label("完成一次跟打后，这里会显示速度趋势与成绩。", size: 12)
             empty.textColor = RimeUI.textSecondary
             historyRows.addArrangedSubview(empty)
         }
@@ -595,11 +754,11 @@ final class TypingSpeedSettingsViewController: NSViewController, TypingPracticeT
         }
     }
 
-    private func textPanel(title: String, detail: String, textView: NSTextView, height: CGFloat) -> NSView {
+    private func textPanel(title: String, hint: String, textView: NSTextView) -> NSView {
         let titleLabel = label(title, size: 11, weight: .semibold)
-        titleLabel.toolTip = detail
-        let header = row([titleLabel, flexible()])
-        header.edgeInsets = NSEdgeInsets(top: 10, left: 14, bottom: 0, right: 14)
+        let hintLabel = label(hint, size: 10.5)
+        hintLabel.textColor = RimeUI.textMuted
+        hintLabel.setContentCompressionResistancePriority(.init(100), for: .horizontal)
         let scroll = NSScrollView()
         scroll.drawsBackground = false
         scroll.hasVerticalScroller = true
@@ -611,15 +770,24 @@ final class TypingSpeedSettingsViewController: NSViewController, TypingPracticeT
         textView.textContainer?.widthTracksTextView = true
         textView.textContainer?.containerSize = NSSize(width: 0, height: CGFloat.greatestFiniteMagnitude)
         scroll.documentView = textView
-        scroll.translatesAutoresizingMaskIntoConstraints = false
-        scroll.heightAnchor.constraint(equalToConstant: height - 32).isActive = true
-        let stack = NSStackView(views: [header, scroll])
-        stack.orientation = .vertical
-        stack.spacing = 5
-        stack.alignment = .leading
-        header.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
-        scroll.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
-        return roundedBox(stack)
+        let box = TypingTestSurfaceView()
+        for subview in [titleLabel, hintLabel, scroll] {
+            subview.translatesAutoresizingMaskIntoConstraints = false
+            box.addSubview(subview)
+        }
+        NSLayoutConstraint.activate([
+            titleLabel.leadingAnchor.constraint(equalTo: box.leadingAnchor, constant: 14),
+            titleLabel.topAnchor.constraint(equalTo: box.topAnchor, constant: 9),
+            hintLabel.leadingAnchor.constraint(greaterThanOrEqualTo: titleLabel.trailingAnchor, constant: 10),
+            hintLabel.trailingAnchor.constraint(equalTo: box.trailingAnchor, constant: -14),
+            hintLabel.firstBaselineAnchor.constraint(equalTo: titleLabel.firstBaselineAnchor),
+            scroll.leadingAnchor.constraint(equalTo: box.leadingAnchor, constant: 2),
+            scroll.trailingAnchor.constraint(equalTo: box.trailingAnchor, constant: -2),
+            scroll.topAnchor.constraint(equalTo: titleLabel.bottomAnchor, constant: 4),
+            scroll.bottomAnchor.constraint(equalTo: box.bottomAnchor, constant: -6),
+            scroll.heightAnchor.constraint(greaterThanOrEqualToConstant: 62),
+        ])
+        return box
     }
     private func roundedBox(_ content: NSView) -> NSView {
         let box = TypingTestSurfaceView()
@@ -638,8 +806,31 @@ final class TypingSpeedSettingsViewController: NSViewController, TypingPracticeT
         let stack = NSStackView(views: views)
         stack.orientation = .horizontal
         stack.alignment = .centerY
+        stack.distribution = .fill
         stack.spacing = 10
         return stack
+    }
+    /// Title on the left, controls on the right; the title's edge is pinned to the
+    /// controls, so it truncates only when it truly has no room left.
+    private func headerRow(_ titles: NSView, trailing: [NSView]) -> NSView {
+        let container = NSView()
+        let controls = row(trailing)
+        controls.distribution = .gravityAreas
+        controls.setContentHuggingPriority(.required, for: .horizontal)
+        controls.setContentCompressionResistancePriority(.required, for: .horizontal)
+        controls.translatesAutoresizingMaskIntoConstraints = false
+        titles.translatesAutoresizingMaskIntoConstraints = false
+        container.addSubview(titles)
+        container.addSubview(controls)
+        NSLayoutConstraint.activate([
+            titles.leadingAnchor.constraint(equalTo: container.leadingAnchor),
+            titles.topAnchor.constraint(equalTo: container.topAnchor),
+            titles.bottomAnchor.constraint(equalTo: container.bottomAnchor),
+            controls.trailingAnchor.constraint(equalTo: container.trailingAnchor),
+            controls.centerYAnchor.constraint(equalTo: container.centerYAnchor),
+            titles.trailingAnchor.constraint(equalTo: controls.leadingAnchor, constant: -12),
+        ])
+        return container
     }
     private func metricRow(_ views: [NSView]) -> NSStackView {
         let stack = row(views)
@@ -655,7 +846,9 @@ final class TypingSpeedSettingsViewController: NSViewController, TypingPracticeT
     }
     private func flexible() -> NSView {
         let spacer = NSView()
-        spacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
+        // Below every label's compression resistance, so the gap absorbs slack
+        // before any text is truncated.
+        spacer.setContentHuggingPriority(.init(50), for: .horizontal)
         return spacer
     }
     private func iconButton(_ symbol: String, help: String, action: Selector) -> NSButton {
@@ -684,9 +877,9 @@ final class TypingSpeedSettingsViewController: NSViewController, TypingPracticeT
     /// Isolated rendering hooks: no user window, keyboard event, or live store mutation.
     func prepareForSmoke(articleID: String, committedText: String = "") {
         _ = view
-        guard let article = TypingTestArticles.article(id: articleID) else { return }
+        guard let article = article(id: articleID) else { return }
         selectedArticle = article
-        articlePicker.selectItem(at: TypingTestArticles.all.firstIndex { $0.id == articleID } ?? 0)
+        materials.select(articleID: articleID)
         if isHistory { refreshHistory(rebuildContexts: true); return }
         resetArticle()
         if !committedText.isEmpty {
@@ -698,7 +891,10 @@ final class TypingSpeedSettingsViewController: NSViewController, TypingPracticeT
             render(smoke.snapshot(at: 20))
         }
     }
-    var smokeArticleCount: Int { articlePicker.numberOfItems }
+    var smokeMaterialRowCount: Int { materials.smokeRowCount }
+    var smokeMaterials: TypingTestMaterialColumn { materials }
+    var smokePageScroll: NSScrollView? { pageScroll }
+    var smokeTargetScroll: NSScrollView? { targetText.enclosingScrollView }
     var smokeTargetString: String { targetText.string }
     var smokeEditor: TypingTestTextView { editor }
     var smokeChart: MetricsLineChartView { speedChart }
@@ -720,10 +916,46 @@ private final class TypingTestDocumentView: NSView {
     }
 }
 
-private final class TypingTestSurfaceView: NSView {
+private final class TypingTestFlippedView: NSView {
+    override var isFlipped: Bool { true }
+}
+
+/// The page's only scroll view. The document always fills the viewport and
+/// never drops below its minimum, so inner panels flex instead of clipping.
+private final class TypingTestPageScrollView: NSScrollView {
+    private let minimumHeightConstraint: NSLayoutConstraint
+
+    init(document: NSView, minimumHeight: CGFloat, minimumWidth: CGFloat) {
+        minimumHeightConstraint = document.heightAnchor.constraint(greaterThanOrEqualToConstant: minimumHeight)
+        super.init(frame: .zero)
+        drawsBackground = false
+        hasVerticalScroller = true
+        hasHorizontalScroller = true
+        autohidesScrollers = true
+        borderType = .noBorder
+        document.translatesAutoresizingMaskIntoConstraints = false
+        documentView = document
+        let fillHeight = document.heightAnchor.constraint(equalTo: contentView.heightAnchor)
+        let fillWidth = document.widthAnchor.constraint(equalTo: contentView.widthAnchor)
+        fillHeight.priority = .defaultHigh
+        fillWidth.priority = .defaultHigh
+        NSLayoutConstraint.activate([
+            document.leadingAnchor.constraint(equalTo: contentView.leadingAnchor),
+            document.topAnchor.constraint(equalTo: contentView.topAnchor),
+            fillHeight, fillWidth, minimumHeightConstraint,
+            document.widthAnchor.constraint(greaterThanOrEqualToConstant: minimumWidth),
+        ])
+    }
+    required init?(coder: NSCoder) { nil }
+
+    func setMinimumHeight(_ value: CGFloat) { minimumHeightConstraint.constant = value }
+}
+
+private class TypingTestSurfaceView: NSView {
+    var cornerRadius: CGFloat { 10 }
     override func draw(_ dirtyRect: NSRect) {
         super.draw(dirtyRect)
-        let path = NSBezierPath(roundedRect: bounds.insetBy(dx: 0.5, dy: 0.5), xRadius: 10, yRadius: 10)
+        let path = NSBezierPath(roundedRect: bounds.insetBy(dx: 0.5, dy: 0.5), xRadius: cornerRadius, yRadius: cornerRadius)
         RimeUI.surface.setFill(); path.fill()
         RimeUI.border.setStroke(); path.lineWidth = 1; path.stroke()
     }
@@ -731,4 +963,102 @@ private final class TypingTestSurfaceView: NSView {
         super.viewDidChangeEffectiveAppearance()
         needsDisplay = true
     }
+}
+
+private final class TypingTestDividerView: NSView {
+    override func draw(_ dirtyRect: NSRect) {
+        RimeUI.border.setFill()
+        bounds.fill()
+    }
+    override func viewDidChangeEffectiveAppearance() {
+        super.viewDidChangeEffectiveAppearance()
+        needsDisplay = true
+    }
+}
+
+/// Compact measurement used by both pages: a caption over a value and unit.
+final class TypingTestStatTile: NSView {
+    private let surface = TypingTestStatSurface()
+    private let caption = NSTextField(labelWithString: "")
+    private let valueLabel = NSTextField(labelWithString: "—")
+    private let unitLabel = NSTextField(labelWithString: "")
+    private let title: String
+
+    init(title: String, symbolName: String) {
+        self.title = title
+        super.init(frame: .zero)
+        translatesAutoresizingMaskIntoConstraints = false
+        let icon = NSImageView()
+        icon.image = RimeUI.symbol(symbolName, pointSize: 11, weight: .medium)
+        icon.contentTintColor = RimeUI.accentTextColor
+        caption.stringValue = title
+        caption.font = .systemFont(ofSize: 10.5, weight: .medium)
+        caption.textColor = RimeUI.textSecondary
+        caption.lineBreakMode = .byTruncatingTail
+        caption.setContentCompressionResistancePriority(.init(100), for: .horizontal)
+        valueLabel.font = .monospacedDigitSystemFont(ofSize: 20, weight: .semibold)
+        valueLabel.textColor = RimeUI.textPrimary
+        valueLabel.lineBreakMode = .byTruncatingTail
+        valueLabel.setContentCompressionResistancePriority(.init(200), for: .horizontal)
+        unitLabel.font = .systemFont(ofSize: 10)
+        unitLabel.textColor = RimeUI.textMuted
+        unitLabel.lineBreakMode = .byTruncatingTail
+        unitLabel.setContentCompressionResistancePriority(.init(100), for: .horizontal)
+        let heading = NSStackView(views: [icon, caption])
+        heading.orientation = .horizontal; heading.spacing = 4; heading.alignment = .centerY
+        let reading = NSStackView(views: [valueLabel, unitLabel])
+        reading.orientation = .horizontal; reading.spacing = 4; reading.alignment = .firstBaseline
+        let stack = NSStackView(views: [heading, reading])
+        stack.orientation = .vertical; stack.spacing = 3; stack.alignment = .leading
+        for subview in [surface, stack] { subview.translatesAutoresizingMaskIntoConstraints = false; addSubview(subview) }
+        NSLayoutConstraint.activate([
+            surface.leadingAnchor.constraint(equalTo: leadingAnchor), surface.trailingAnchor.constraint(equalTo: trailingAnchor),
+            surface.topAnchor.constraint(equalTo: topAnchor), surface.bottomAnchor.constraint(equalTo: bottomAnchor),
+            stack.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 9),
+            stack.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -5),
+            stack.centerYAnchor.constraint(equalTo: centerYAnchor),
+            heightAnchor.constraint(equalToConstant: 56),
+        ])
+        setAccessibilityElement(true)
+        setAccessibilityRole(.staticText)
+        update(value: "—")
+    }
+    required init?(coder: NSCoder) { nil }
+
+    func update(value: String, unit: String = "", detail: String = "") {
+        valueLabel.stringValue = value
+        unitLabel.stringValue = unit
+        toolTip = detail.isEmpty ? nil : detail
+        setAccessibilityLabel("\(title == "正确率" ? "过程正确率" : title) \(value) \(unit)")
+    }
+}
+
+private final class TypingTestStatSurface: TypingTestSurfaceView {
+    override var cornerRadius: CGFloat { 8 }
+}
+
+/// Title over detail. It has no intrinsic width: the row hands it all the room
+/// left of the buttons and both lines truncate only when that runs out.
+private final class TypingTestTitleBlock: NSView {
+    init(title: NSTextField, detail: NSTextField) {
+        super.init(frame: .zero)
+        translatesAutoresizingMaskIntoConstraints = false
+        for field in [title, detail] {
+            field.translatesAutoresizingMaskIntoConstraints = false
+            field.lineBreakMode = .byTruncatingTail
+            field.setContentCompressionResistancePriority(.init(100), for: .horizontal)
+            field.setContentHuggingPriority(.init(50), for: .horizontal)
+            addSubview(field)
+            field.leadingAnchor.constraint(equalTo: leadingAnchor).isActive = true
+            field.trailingAnchor.constraint(equalTo: trailingAnchor).isActive = true
+        }
+        NSLayoutConstraint.activate([
+            title.topAnchor.constraint(equalTo: topAnchor),
+            detail.topAnchor.constraint(equalTo: title.bottomAnchor, constant: 2),
+            detail.bottomAnchor.constraint(equalTo: bottomAnchor),
+        ])
+        setContentCompressionResistancePriority(.init(100), for: .horizontal)
+        setContentHuggingPriority(.init(50), for: .horizontal)
+    }
+    required init?(coder: NSCoder) { nil }
 }

@@ -336,6 +336,20 @@
       ]
     },
     {
+      "source": "native/macos/TypingTestLibrary.swift",
+      "destination": "Sources/RimeBuffer/TypingTestLibrary.swift",
+      "plugins": [
+        "builtin.typing-speed"
+      ]
+    },
+    {
+      "source": "native/macos/TypingTestMaterialColumn.swift",
+      "destination": "Sources/RimeBuffer/TypingTestMaterialColumn.swift",
+      "plugins": [
+        "builtin.typing-speed"
+      ]
+    },
+    {
       "source": "native/macos/TypingTestSession.swift",
       "destination": "Sources/RimeBuffer/TypingTestSession.swift",
       "plugins": [

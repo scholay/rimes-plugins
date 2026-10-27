@@ -691,6 +691,13 @@
       "plugins": [
         "builtin.typing-speed"
       ]
+    },
+    {
+      "source": "native/shared/typing-practice/article_inventory.hpp",
+      "destination": "Shared/TypingPractice/article_inventory.hpp",
+      "plugins": [
+        "builtin.typing-speed"
+      ]
     }
   ]
 }

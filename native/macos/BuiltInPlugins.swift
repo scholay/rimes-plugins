@@ -106,7 +106,6 @@ private final class StatisticsInternalPlugin: InternalPlugin {
             subpages: [
                 PluginSettingsSubpage(id: "daily", title: "每日"),
                 PluginSettingsSubpage(id: "history", title: "历史"),
-                PluginSettingsSubpage(id: "test-results", title: "测速成绩"),
             ]
         ),
         canUninstall: true
@@ -506,9 +505,6 @@ private final class StreamInputInternalPlugin:
 /// settings window's routing shell. Each call returns a page-owned controller.
 enum BuiltInPluginPageFactory {
     static func makeStatistics(subpageID: String) -> NSViewController {
-        if subpageID == "test-results" {
-            return TypingSpeedSettingsViewController(subpageID: "history")
-        }
         return StatisticsSettingsViewController(subpageID: subpageID)
     }
 

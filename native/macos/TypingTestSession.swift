@@ -280,9 +280,14 @@ final class TypingTestSession {
         return value
     }
 
+    /// Line breaks are layout, never scored: an article marks its paragraphs with
+    /// them and the practice view adds them to the typed row at the same places,
+    /// so both sides drop them before comparing.
     static func normalized(_ text: String) -> String {
-        text.replacingOccurrences(of: "\r\n", with: "\n")
-            .replacingOccurrences(of: "\r", with: "\n")
+        guard text.utf8.contains(where: { $0 == 10 || $0 == 13 }) else { return text }
+        return text.replacingOccurrences(of: "\r\n", with: "")
+            .replacingOccurrences(of: "\r", with: "")
+            .replacingOccurrences(of: "\n", with: "")
     }
 
     private func accepts(_ time: TimeInterval) -> Bool {

@@ -136,39 +136,68 @@ import RimesCore
     func cancel() {} // Runner cancels the owning Task; URLSession transport observes it.
 }
 
-/// Keyboard plugins, in shortcut order. Apple Translation runs as you type; AI plugins
-/// only open, then wait for the user to write and tap Run.
-enum KeyboardPlugin: String, CaseIterable {
-    case translate = "apple.translation", ask = "ai.ask", polish = "ai.polish", poem = "ai.poem", art = "ai.art"
+/// A keyboard plugin: one of the built-in five, or one of the user's assistant presets.
+/// Apple Translation runs as you type; AI plugins only open, then wait for the user to
+/// write and tap Run. Identity is the id, so a renamed preset is still the same plugin.
+struct KeyboardPlugin: Hashable {
+    let rawValue: String
+    private let custom: AssistantPreset?
+    private init(_ id: String) { rawValue = id; custom = nil }
+    init(preset: AssistantPreset) { rawValue = preset.entryID; custom = preset }
+    static let translate = KeyboardPlugin("apple.translation"), ask = KeyboardPlugin("ai.ask"), polish = KeyboardPlugin("ai.polish")
+    static let poem = KeyboardPlugin("ai.poem"), art = KeyboardPlugin("ai.art")
+    static let builtIn: [KeyboardPlugin] = [.translate, .ask, .polish, .poem, .art]
+    static func == (lhs: KeyboardPlugin, rhs: KeyboardPlugin) -> Bool { lhs.rawValue == rhs.rawValue }
+    func hash(into hasher: inout Hasher) { hasher.combine(rawValue) }
+    /// Resolves an entry id against the user's presets; unknown ids give nil.
+    static func entry(_ id: String, in library: AssistantLibrary) -> KeyboardPlugin? {
+        if let builtIn = builtIn.first(where: { $0.rawValue == id }) { return builtIn }
+        return library.preset(entry: id).map(KeyboardPlugin.init(preset:))
+    }
+    /// Every plugin that can be opened: the built-in five, then the user's presets.
+    static func all(in library: AssistantLibrary) -> [KeyboardPlugin] { builtIn + library.presets.map(KeyboardPlugin.init(preset:)) }
+    /// The plugins on the quick entrance bar, in the user's order.
+    static func entrance(in library: AssistantLibrary) -> [KeyboardPlugin] { library.entranceEntries.compactMap { entry($0, in: library) } }
     var isAI: Bool { self != .translate }
+    var isPreset: Bool { custom != nil }
+    /// The user's instruction for a preset; built-in plugins take theirs from their package.
+    var presetInstruction: String? { custom?.instruction }
+    /// Official-plugin id that gates this one. Presets are powered by the Ask plugin.
+    var gateID: String { custom == nil ? rawValue : KeyboardPlugin.ask.rawValue }
     var title: String {
+        if let custom { return custom.name }
         switch self {
         case .translate: return L("苹果翻译", "Translate")
         case .polish: return L("AI 润色", "AI Polish")
         case .poem: return L("AI 作诗", "AI Poem")
         case .art: return L("AI 字符画", "AI Text Art")
-        case .ask: return L("快问快答", "Quick Q&A")
+        default: return L("快问快答", "Quick Q&A")
         }
     }
     var shortTitle: String {
+        if let custom { return String(custom.name.prefix(4)) }
         switch self {
         case .translate: return L("翻译", "Trans")
         case .polish: return L("润色", "Polish")
         case .poem: return L("作诗", "Poem")
         case .art: return L("画画", "Draw")
-        case .ask: return L("快问", "Ask")
+        default: return L("快问", "Ask")
         }
     }
     var symbol: String {
-        switch self { case .translate: return "translate"; case .polish: return "wand.and.stars"; case .poem: return "text.book.closed"; case .art: return "square.grid.3x3.fill"; case .ask: return "questionmark.bubble" }
+        if let custom { return custom.symbol }
+        switch self { case .translate: return "translate"; case .polish: return "wand.and.stars"; case .poem: return "text.book.closed"; case .art: return "square.grid.3x3.fill"; default: return "questionmark.bubble" }
     }
     var placeholder: String {
+        if let custom {
+            return custom.placeholder.isEmpty ? L("写下内容，再点 ▶ 执行", "Write something, then tap ▶") : custom.placeholder
+        }
         switch self {
         case .translate: return L("输入要翻译的文字", "Type text to translate")
         case .polish: return L("写下要润色的文字，再点 ▶ 执行", "Write text to polish, then tap ▶")
         case .poem: return L("写下主题或要藏的字，再点 ▶ 作诗", "Write a theme or hidden words, then tap ▶")
         case .art: return L("写下要画的东西，再点 ▶ 画出来", "Say what to draw, then tap ▶")
-        case .ask: return L("问点什么，写完点 ▶", "Ask something, then tap ▶")
+        default: return L("问点什么，写完点 ▶", "Ask something, then tap ▶")
         }
     }
 }

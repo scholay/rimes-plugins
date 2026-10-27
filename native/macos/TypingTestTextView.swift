@@ -1,7 +1,7 @@
 import AppKit
 
 /// A local NSTextInputClient; only committed text leaves this editor for scoring.
-final class TypingTestTextView: NSTextView {
+class TypingTestTextView: NSTextView {
     var onPhysicalKey: ((NSEvent) -> Void)?
     var onCommittedText: ((String, Range<Int>?) -> Void)?
     var onCompositionStarted: (() -> Void)?

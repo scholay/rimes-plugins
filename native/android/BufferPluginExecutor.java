@@ -31,11 +31,14 @@ final class BufferPluginExecutor implements AutoCloseable {
         return run(pluginID,source,direction,OpenAiSettings.disabled(),listener);
     }
     synchronized Job run(String pluginID,String source,String direction,OpenAiSettings.Snapshot profile,Listener listener) {
+        return run(pluginID,source,direction,profile,null,listener);
+    }
+    synchronized Job run(String pluginID,String source,String direction,OpenAiSettings.Snapshot profile,String instructionOverride,Listener listener) {
         if(listener==null) throw new IllegalArgumentException("Plugin listener is required");
         if(closed) throw new IllegalStateException("Plugin executor is closed");
         if(current!=null) current.cancel();
         Job job=new Job(listener); current=job;
-        FutureTask<Void> task=new FutureTask<>(() -> { execute(job,pluginID,source,direction,profile); return null; });
+        FutureTask<Void> task=new FutureTask<>(() -> { execute(job,pluginID,source,direction,profile,instructionOverride); return null; });
         job.task=task; worker.execute(task); return job;
     }
     @Override public synchronized void close() {
@@ -63,13 +66,13 @@ final class BufferPluginExecutor implements AutoCloseable {
         }
         private synchronized void release() { listener=null; task=null; }
     }
-    private void execute(Job job,String pluginID,String source,String direction,OpenAiSettings.Snapshot profile) {
+    private void execute(Job job,String pluginID,String source,String direction,OpenAiSettings.Snapshot profile,String instructionOverride) {
         try {
             job.cancellation.check(); OpenAiChatCodec.validateSource(source);
             if(!packages.enabled(pluginID)) throw new IOException("请先在官方插件中安装并启用");
             if(profile.remote(pluginID)) {
                 String instruction;
-                try { instruction=packages.instruction(pluginID); }
+                try { instruction=instructionOverride==null?packages.instruction(pluginID):instructionOverride; }
                 catch(Exception error) { throw new IOException("插件内容不可用",error); }
                 byte[] request=OpenAiChatCodec.makeRemoteRequest(pluginID,source,profile.model,direction,instruction);
                 String key=aiSettings.credential(profile);

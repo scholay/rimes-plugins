@@ -187,6 +187,7 @@ std::vector<Grapheme> Characters(const std::string& text) {
          from = to) {
         Grapheme value;
         auto part = unicode.tempSubStringBetween(from, to);
+        if (part == icu::UnicodeString("\n")) continue; // visual track/paragraph breaks
         part.toUTF8String(value.text);
         icu::UnicodeString canonical;
         normalizer->normalize(part, canonical, error);

@@ -336,6 +336,20 @@
       ]
     },
     {
+      "source": "native/macos/TypingTestLibrary.swift",
+      "destination": "Sources/RimeBuffer/TypingTestLibrary.swift",
+      "plugins": [
+        "builtin.typing-speed"
+      ]
+    },
+    {
+      "source": "native/macos/TypingTestMaterialColumn.swift",
+      "destination": "Sources/RimeBuffer/TypingTestMaterialColumn.swift",
+      "plugins": [
+        "builtin.typing-speed"
+      ]
+    },
+    {
       "source": "native/macos/TypingTestSession.swift",
       "destination": "Sources/RimeBuffer/TypingTestSession.swift",
       "plugins": [
@@ -345,6 +359,13 @@
     {
       "source": "native/macos/TypingTestTextView.swift",
       "destination": "Sources/RimeBuffer/TypingTestTextView.swift",
+      "plugins": [
+        "builtin.typing-speed"
+      ]
+    },
+    {
+      "source": "native/macos/TypingTestTrackView.swift",
+      "destination": "Sources/RimeBuffer/TypingTestTrackView.swift",
       "plugins": [
         "builtin.typing-speed"
       ]
@@ -653,6 +674,27 @@
     {
       "source": "native/shared/typing-practice/typing_practice_core.cpp",
       "destination": "platforms/linux/typing-practice/core/typing_practice_core.cpp",
+      "plugins": [
+        "builtin.typing-speed"
+      ]
+    },
+    {
+      "source": "native/shared/typing-practice/material_library.hpp",
+      "destination": "Shared/TypingPractice/material_library.hpp",
+      "plugins": [
+        "builtin.typing-speed"
+      ]
+    },
+    {
+      "source": "native/shared/typing-practice/material_library.cpp",
+      "destination": "Shared/TypingPractice/material_library.cpp",
+      "plugins": [
+        "builtin.typing-speed"
+      ]
+    },
+    {
+      "source": "native/shared/typing-practice/article_inventory.hpp",
+      "destination": "Shared/TypingPractice/article_inventory.hpp",
       "plugins": [
         "builtin.typing-speed"
       ]

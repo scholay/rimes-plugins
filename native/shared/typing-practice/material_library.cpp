@@ -365,7 +365,7 @@ Json ParseEPUB(const fs::path& path) {
     if(chapters.empty())Fail("没有从 EPUB 读出可供跟打的正文");
     const auto digest=picosha2::hash256_hex_string(archive.bytes);
     if(title.empty())title=path.stem().u8string();
-    Json book={{"version",1},{"cut",3},{"id",digest.substr(0,16)},{"title",Tidy(title)},{"author",Tidy(author)},
+    Json book={{"version",1},{"cut",4},{"id",digest.substr(0,16)},{"title",Tidy(title)},{"author",Tidy(author)},
         {"importedAt",std::chrono::duration<double>(std::chrono::system_clock::now().time_since_epoch()).count()},{"chapters",chapters}};
     if(book.dump().size()>kBook)Fail("书籍超过本机文库大小限制");ValidateBook(book);return book;
 }

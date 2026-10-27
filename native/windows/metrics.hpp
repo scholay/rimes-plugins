@@ -16,6 +16,7 @@ using core::Json;
 struct Article {
   std::string id, language, title, theme, difficulty, text;
   int version = 1;
+  std::string display_text;
 };
 const std::vector<Article>& Articles();
 std::vector<std::wstring> Characters(const std::string& text);
@@ -94,6 +95,7 @@ class Service {
   bool Repair();
   void Save();
   bool Armed();
+  const std::filesystem::path& MaterialRoot() const { return root_; }
   std::string Issue();
   // Value-level event admission is exposed for deterministic regression tests.
   void Daily(unsigned key, bool repeat, unsigned modifiers, unsigned commits,

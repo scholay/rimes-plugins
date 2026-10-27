@@ -212,16 +212,9 @@ std::string Day(double wall) {
   return out;
 }
 std::string Normalize(std::string text) {
-  std::string out;
-  out.reserve(text.size());
-  for (std::size_t i = 0; i < text.size(); ++i) {
-    if (text[i] == '\r') {
-      out += '\n';
-      if (i + 1 < text.size() && text[i + 1] == '\n') ++i;
-    } else
-      out += text[i];
-  }
-  return out;
+  // Layout-only paragraph and track breaks never count as typed characters.
+  text.erase(std::remove_if(text.begin(), text.end(), [](char c) { return c == '\r' || c == '\n'; }), text.end());
+  return text;
 }
 std::vector<std::wstring> Characters(const std::string& text) {
   const auto wide = workbench::Wide(Normalize(text));

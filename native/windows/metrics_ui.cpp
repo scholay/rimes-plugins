@@ -156,7 +156,10 @@ struct ExtensionPages::Impl {
   HBRUSH background = nullptr, surface = nullptr;
   std::map<int, HWND> controls;
   std::map<int, ui::DipRect> positions;
-  int track_columns = 20;
+  int track_columns = 20, formatted_columns = 0;
+  unsigned formatted_dpi = 0;
+  std::wstring track_formatted;
+  std::string formatted_article;
   std::vector<rimes::practice::materials::TrackRow> track_rows;
   std::vector<metrics::Article> articles = metrics::Articles();
   std::vector<Json> books;
@@ -277,6 +280,9 @@ struct ExtensionPages::Impl {
       }
       return static_cast<LONG>(units);
     };
+    std::size_t unchanged = 0;
+    if (before == formatted && formatted_columns == track_columns && formatted_dpi == dpi && formatted_article == a.id)
+      while (unchanged < track_formatted.size() && unchanged < formatted.size() && track_formatted[unchanged] == formatted[unchanged]) ++unchanged;
     POINT scroll_pos{}; SendMessageW(editor, EM_GETSCROLLPOS, 0, reinterpret_cast<LPARAM>(&scroll_pos));
     suppress = true;
     SendMessageW(editor, WM_SETREDRAW, FALSE, 0);
@@ -285,13 +291,18 @@ struct ExtensionPages::Impl {
     SendMessageW(editor, EM_SETRECT, 0, reinterpret_cast<LPARAM>(&inset));
     SendMessageW(editor, EM_SETTARGETDEVICE, 0, 1); // Explicit rows; no word-boundary rewrap.
     PARAFORMAT2 paragraph{}; paragraph.cbSize = sizeof(paragraph);
-    paragraph.dwMask = PFM_LINESPACING | PFM_STARTINDENT | PFM_OFFSET;
+    paragraph.dwMask = PFM_LINESPACING | PFM_STARTINDENT | PFM_OFFSET | PFM_SPACEAFTER;
+    paragraph.dySpaceAfter = 0;
     paragraph.dxStartIndent = indents.front() * 28 * 15;
     paragraph.bLineSpacingRule = 4; paragraph.dyLineSpacing = 76 * 15;
     auto dc = GetDC(editor); auto old = SelectObject(dc, editor_font);
     LONG position = 0; std::size_t line_index = 0;
     for (const auto& c : mat::Characters(Utf8(formatted))) {
       const auto text = Wide(c); CHARRANGE span{position, position + static_cast<LONG>(text.size())};
+      if (span.cpMax <= static_cast<LONG>(unchanged)) {
+        if (c == "\r" || c == "\n" || c == "\r\n") ++line_index;
+        position = span.cpMax; continue;
+      }
       SendMessageW(editor, EM_EXSETSEL, 0, reinterpret_cast<LPARAM>(&span));
       paragraph.dxStartIndent = indents[std::min(line_index, indents.size() - 1)] * 28 * 15;
       paragraph.dxOffset = 0;
@@ -306,13 +317,20 @@ struct ExtensionPages::Impl {
       position = span.cpMax;
     }
     SelectObject(dc, old); ReleaseDC(editor, dc);
+    CHARRANGE tail{position, position};
+    SendMessageW(editor, EM_EXSETSEL, 0, reinterpret_cast<LPARAM>(&tail));
+    PARAFORMAT2 trailing{}; trailing.cbSize = sizeof(trailing); trailing.dwMask = PFM_SPACEAFTER;
+    trailing.dySpaceAfter = static_cast<LONG>(track_rows.size() > indents.size() ? track_rows.size() - indents.size() : 0) * 76 * 15;
+    SendMessageW(editor, EM_SETPARAFORMAT, 0, reinterpret_cast<LPARAM>(&trailing));
     CHARRANGE restored{physical(begin), physical(end)};
     SendMessageW(editor, EM_EXSETSEL, 0, reinterpret_cast<LPARAM>(&restored));
     if (restored.cpMin == restored.cpMax) {
       const auto caret_row = static_cast<std::size_t>(std::count(formatted.begin(), formatted.begin() + restored.cpMin, L'\r'));
       paragraph.dxStartIndent = indents[std::min(caret_row, indents.size() - 1)] * 28 * 15;
+      paragraph.dwMask = PFM_LINESPACING | PFM_STARTINDENT | PFM_OFFSET;
       SendMessageW(editor, EM_SETPARAFORMAT, 0, reinterpret_cast<LPARAM>(&paragraph));
     }
+    track_formatted = formatted; formatted_columns = track_columns; formatted_dpi = dpi; formatted_article = a.id;
     SendMessageW(editor, EM_SETSCROLLPOS, 0, reinterpret_cast<LPARAM>(&scroll_pos));
     SendMessageW(editor, WM_SETREDRAW, TRUE, 0);
     suppress = false; InvalidateRect(editor, nullptr, FALSE);
@@ -322,6 +340,7 @@ struct ExtensionPages::Impl {
     RECT client{}; GetClientRect(edit, &client);
     POINT scroll_pos{}; SendMessageW(edit, EM_GETSCROLLPOS, 0, reinterpret_cast<LPARAM>(&scroll_pos));
     auto old = SelectObject(dc, editor_font); SetBkMode(dc, TRANSPARENT);
+    auto grid = CreateSolidBrush(ui::ToColorRef(ui::Blend(Palette().surface, Palette().text_primary, .10f)));
     for (std::size_t row = 0; row < track_rows.size(); ++row) {
       const auto y = Px(10 + static_cast<int>(row) * 76) - scroll_pos.y;
       if (y + Px(28) < 0 || y > client.bottom) continue;
@@ -332,10 +351,11 @@ struct ExtensionPages::Impl {
         const int state = last_states.is_array() && index < last_states.size() ? last_states[index].get<int>() : 0;
         SetTextColor(dc, ui::ToColorRef(state == 1 ? Palette().accent_text : state >= 2 ? Palette().danger_text : Palette().text_secondary));
         RECT cell{Px(12 + (source_row.indent + static_cast<int>(i)) * 28), y, Px(12 + (source_row.indent + static_cast<int>(i) + 1) * 28), y + Px(28)};
-        const auto text = Wide(chars[i]); DrawTextW(dc, text.c_str(), static_cast<int>(text.size()), &cell, DT_CENTER | DT_SINGLELINE | DT_NOPREFIX);
+        FrameRect(dc, &cell, grid); auto typed_cell = cell; OffsetRect(&typed_cell, 0, Px(32)); FrameRect(dc, &typed_cell, grid);
+        const auto text = Wide(chars[i]); DrawTextW(dc, text.c_str(), static_cast<int>(text.size()), &cell, DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
       }
     }
-    SelectObject(dc, old);
+    DeleteObject(grid); SelectObject(dc, old);
   }
   void LoadMaterials(const std::filesystem::path& path = {}, const std::string& remove = {}) {
     if (material_task) { status = L"素材正在处理，请稍后…"; return; }

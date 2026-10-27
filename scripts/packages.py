@@ -124,7 +124,7 @@ def native_sources(root: Path, plugin_ids: set[str]) -> tuple[dict, dict[str, by
     for entry in source_map["files"]:
         source, destination = entry["source"], entry["destination"]
         require(source.startswith("native/"), "native sources must live under native/")
-        require(destination.startswith(("Sources/", "Shared/Sources/", "platforms/")), "invalid host destination")
+        require(destination.startswith(("Sources/", "Shared/Sources/", "Shared/TypingPractice/", "platforms/")), "invalid host destination")
         safe_path(root, destination)
         require(destination not in destinations, "duplicate host destination")
         require(bool(entry["plugins"]) and set(entry["plugins"]) <= plugin_ids, "source references unknown plugin")

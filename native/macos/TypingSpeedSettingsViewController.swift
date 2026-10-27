@@ -26,6 +26,8 @@ final class TypingSpeedSettingsViewController: NSViewController, TypingPracticeT
     private static let lastArticleKey = "TypingTest.lastArticleID"
     private lazy var materials = TypingTestMaterialColumn(library: library)
     private weak var pageScroll: TypingTestPageScrollView?
+    private var materialsDivider = TypingTestDividerView()
+    private let materialsButton = RimePointingHandButton(title: "", target: nil, action: nil)
     private let contextPicker = NSPopUpButton(frame: .zero, pullsDown: false)
     private let startButton = RimePointingHandButton(title: "开始跟打", target: nil, action: nil)
     private let finishButton = RimePointingHandButton(title: "结束", target: nil, action: nil)
@@ -96,42 +98,52 @@ final class TypingSpeedSettingsViewController: NSViewController, TypingPracticeT
         storageWarning.isHidden = true
         add(storageWarning, to: right)
 
-        let document = TypingTestDocumentView()
-        document.onDetach = { [weak self] in self?.interrupt(reason: .interrupted, message: "已离开跟打页 · 本次记为练习") }
-        let divider = TypingTestDividerView()
-        for subview in [materials, divider, right] {
-            subview.translatesAutoresizingMaskIntoConstraints = false
-            document.addSubview(subview)
-        }
+        // The main area is the only thing that scrolls. The material sidebar sits
+        // beside it at window height, so it stays put however long the text is.
+        let root = TypingTestDocumentView()
+        root.onDetach = { [weak self] in self?.interrupt(reason: .interrupted, message: "已离开跟打页 · 本次记为练习") }
+        let document = TypingTestFlippedView()
+        document.translatesAutoresizingMaskIntoConstraints = false
+        document.addSubview(right)
         NSLayoutConstraint.activate([
             right.leadingAnchor.constraint(equalTo: document.leadingAnchor),
+            right.trailingAnchor.constraint(equalTo: document.trailingAnchor),
             right.topAnchor.constraint(equalTo: document.topAnchor),
             right.bottomAnchor.constraint(equalTo: document.bottomAnchor),
-            divider.leadingAnchor.constraint(equalTo: right.trailingAnchor),
-            divider.topAnchor.constraint(equalTo: document.topAnchor),
-            divider.bottomAnchor.constraint(equalTo: document.bottomAnchor),
-            divider.widthAnchor.constraint(equalToConstant: 1),
-            materials.leadingAnchor.constraint(equalTo: divider.trailingAnchor),
-            materials.trailingAnchor.constraint(equalTo: document.trailingAnchor),
-            materials.topAnchor.constraint(equalTo: document.topAnchor),
-            materials.bottomAnchor.constraint(equalTo: document.bottomAnchor),
+        ])
+        // The page scroll's minimum height stays low: the content (the full text of
+        // the piece) decides how tall the document really is.
+        let page = TypingTestPageScrollView(document: document, minimumHeight: 0, minimumWidth: 400)
+        materialsDivider = TypingTestDividerView()
+        for subview in [page, materialsDivider, materials] {
+            subview.translatesAutoresizingMaskIntoConstraints = false
+            root.addSubview(subview)
+        }
+        NSLayoutConstraint.activate([
+            page.leadingAnchor.constraint(equalTo: root.leadingAnchor),
+            page.topAnchor.constraint(equalTo: root.topAnchor),
+            page.bottomAnchor.constraint(equalTo: root.bottomAnchor),
+            materialsDivider.leadingAnchor.constraint(equalTo: page.trailingAnchor),
+            materialsDivider.topAnchor.constraint(equalTo: root.topAnchor),
+            materialsDivider.bottomAnchor.constraint(equalTo: root.bottomAnchor),
+            materialsDivider.widthAnchor.constraint(equalToConstant: 1),
+            materials.leadingAnchor.constraint(equalTo: materialsDivider.trailingAnchor),
+            materials.trailingAnchor.constraint(equalTo: root.trailingAnchor),
+            materials.topAnchor.constraint(equalTo: root.topAnchor),
+            materials.bottomAnchor.constraint(equalTo: root.bottomAnchor),
         ])
         materials.onSelect = { [weak self] in self?.choose($0) }
         materials.onCollapsedChange = { [weak self] collapsed in
-            guard let self, self.telemetryEnabled else { return }
-            UserDefaults.standard.set(collapsed, forKey: Self.materialsCollapsedKey)
+            guard let self else { return }
+            if self.telemetryEnabled { UserDefaults.standard.set(collapsed, forKey: Self.materialsCollapsedKey) }
+            self.applyMaterialsVisibility()
         }
         materials.onImport = { [weak self] in self?.importTapped() }
         materials.onDropFiles = { [weak self] in self?.importFiles($0) }
         materials.onRemoveBook = { [weak self] in self?.removeBookTapped($0) }
 
-        // The page owns exactly one scroll view. It stretches the content to the
-        // viewport, so the text panels grow with the window and the page only
-        // scrolls when the window is shorter than the content's minimum.
-        let page = TypingTestPageScrollView(document: document,
-                                            minimumHeight: isHistory ? 560 : 540, minimumWidth: 640)
         pageScroll = page
-        view = page
+        view = root
         view.identifier = NSUserInterfaceItemIdentifier(isHistory ? "typing-test-history" : "typing-test-practice")
     }
 
@@ -225,6 +237,15 @@ final class TypingSpeedSettingsViewController: NSViewController, TypingPracticeT
         gridButton.controlSize = .small
         gridButton.imagePosition = .imageOnly
         gridButton.refusesFirstResponder = true
+        materialsButton.target = self
+        materialsButton.action = #selector(showMaterials)
+        materialsButton.bezelStyle = .rounded
+        materialsButton.controlSize = .small
+        materialsButton.imagePosition = .imageOnly
+        materialsButton.refusesFirstResponder = true
+        materialsButton.image = NSImage(systemSymbolName: "sidebar.right", accessibilityDescription: "素材栏")
+        materialsButton.toolTip = "展开素材栏"
+        materialsButton.setAccessibilityLabel("展开素材栏")
         cellsButton.target = self
         cellsButton.action = #selector(toggleCells)
         cellsButton.bezelStyle = .rounded
@@ -287,8 +308,24 @@ final class TypingSpeedSettingsViewController: NSViewController, TypingPracticeT
     private func buildPractice(in content: NSStackView) {
         let random = iconButton("shuffle", help: "在当前书籍或内置文章里随机换一段", action: #selector(randomTapped))
         let titles = TypingTestTitleBlock(title: articleTitle, detail: articleDetail)
-        add(headerRow(titles, trailing: [random, startButton, finishButton, cellsButton]), to: content)
-        let strip = metricRow([speedCard, keysCard, backspaceCard, accuracyCard])
+        add(headerRow(titles, trailing: [random, startButton, finishButton, cellsButton, materialsButton]), to: content)
+        // The four readings and the speed curve are cards of one band.
+        speedChart.toolTip =
+            "速度轨迹 · 计时含思考与纠错 · 标点逐字对照 · 仅保存成绩，不保存输入正文。"
+            + "中文有效速度 = 正确字符 ÷ 总分钟；英文 WPM = 正确字符 ÷ 5 ÷ 总分钟。"
+            + "过程正确率保留改正前的错误，最终字准单独展示。"
+        speedChart.setAccessibilityLabel("速度轨迹")
+        let readings = NSStackView(views: [metricRow([speedCard, keysCard]), metricRow([backspaceCard, accuracyCard])])
+        readings.orientation = .vertical
+        readings.alignment = .leading
+        readings.distribution = .fillEqually
+        readings.spacing = 8
+        for pair in readings.arrangedSubviews { pair.widthAnchor.constraint(equalTo: readings.widthAnchor).isActive = true }
+        let strip = row([readings, speedChart])
+        strip.distribution = .fillEqually
+        strip.spacing = 8
+        strip.heightAnchor.constraint(equalToConstant: TypingTestStatTile.height * 2 + 8).isActive = true
+        speedChart.heightAnchor.constraint(equalTo: strip.heightAnchor).isActive = true
         add(strip, to: content)
         resultStack.isHidden = true
         add(resultStack, to: content)
@@ -297,18 +334,11 @@ final class TypingSpeedSettingsViewController: NSViewController, TypingPracticeT
         add(row([statusLabel, flexible(), progress, progressLabel, timeLabel]), to: content)
         // One card, double track: each source row over the row being typed.
         add(trackPanel(), to: content, flexible: true)
-        speedChart.toolTip =
-            "速度轨迹 · 计时含思考与纠错 · 标点逐字对照 · 仅保存成绩，不保存输入正文。"
-            + "中文有效速度 = 正确字符 ÷ 总分钟；英文 WPM = 正确字符 ÷ 5 ÷ 总分钟。"
-            + "过程正确率保留改正前的错误，最终字准单独展示。"
-        speedChart.setAccessibilityLabel("速度轨迹")
-        speedChart.heightAnchor.constraint(equalToConstant: 88).isActive = true
-        add(speedChart, to: content)
-        cellViews = [strip, speedChart]
+        cellViews = [strip]
     }
     private func buildHistory(in content: NSStackView) {
         let titles = TypingTestTitleBlock(title: articleTitle, detail: articleDetail)
-        add(headerRow(titles, trailing: [repairButton, clearButton, cellsButton]), to: content)
+        add(headerRow(titles, trailing: [repairButton, clearButton, cellsButton, materialsButton]), to: content)
         add(contextPicker, to: content)
         let strip = metricRow([speedCard, keysCard, backspaceCard, accuracyCard])
         add(strip, to: content)
@@ -637,10 +667,9 @@ final class TypingSpeedSettingsViewController: NSViewController, TypingPracticeT
     private func applyCellsVisibility() {
         cellViews.forEach { $0.isHidden = cellsHidden }
         if !resultVisible || cellsHidden { resultStack.isHidden = true } else { resultStack.isHidden = false }
-        var height: CGFloat = isHistory ? 560 : 540
-        if cellsHidden { height -= isHistory ? 66 : 164 }
-        else if resultVisible { height += 84 }
-        pageScroll?.setMinimumHeight(height)
+        // The history page keeps its own scrolling list and wants some height;
+        // the practice page is exactly as tall as its content.
+        pageScroll?.setMinimumHeight(isHistory ? (cellsHidden ? 494 : 560) + (resultVisible && !cellsHidden ? 84 : 0) : 0)
         let symbol = cellsHidden ? "rectangle.grid.2x2" : "rectangle.grid.2x2.fill"
         cellsButton.image = NSImage(systemSymbolName: symbol, accessibilityDescription: "数据格")
         cellsButton.toolTip = cellsHidden ? "显示数据格" : "隐藏数据格，给文字留出更多空间"
@@ -655,6 +684,18 @@ final class TypingSpeedSettingsViewController: NSViewController, TypingPracticeT
 
     private func setMaterialsCollapsed(_ collapsed: Bool, animated: Bool) {
         materials.setCollapsed(collapsed, animated: animated)
+        applyMaterialsVisibility()
+    }
+
+    /// With the sidebar hidden nothing of it remains; the header offers the way back.
+    private func applyMaterialsVisibility() {
+        materialsDivider.isHidden = materials.isCollapsed
+        materialsButton.isHidden = !materials.isCollapsed
+    }
+
+    @objc private func showMaterials() {
+        setMaterialsCollapsed(false, animated: true)
+        if telemetryEnabled { UserDefaults.standard.set(false, forKey: Self.materialsCollapsedKey) }
     }
 
     private func renderTarget(states: [TypingTestCharacterState], typed: [Bool] = []) {
@@ -787,16 +828,14 @@ final class TypingSpeedSettingsViewController: NSViewController, TypingPracticeT
         let hint = label("上行原文 · 下行输入 · 首键计时 · 组字不判错", size: 10.5)
         hint.textColor = RimeUI.textMuted
         hint.setContentCompressionResistancePriority(.init(100), for: .horizontal)
-        let scroll = NSScrollView()
-        scroll.drawsBackground = false
-        scroll.hasVerticalScroller = true
-        scroll.autohidesScrollers = true
-        scroll.borderType = .noBorder
-        scroll.documentView = editor
-        scroll.translatesAutoresizingMaskIntoConstraints = false
+        // No scroll view of its own: the card is as tall as the whole text and the
+        // page scrolls, so every row can be reached with the ordinary scroll gesture.
+        editor.translatesAutoresizingMaskIntoConstraints = false
+        editor.setContentHuggingPriority(.init(250), for: .vertical)
+        editor.setContentCompressionResistancePriority(.required, for: .vertical)
         gridButton.translatesAutoresizingMaskIntoConstraints = false
         let card = TypingTestSurfaceView()
-        for subview in [title, hint, gridButton, scroll] {
+        for subview in [title, hint, gridButton, editor] {
             subview.translatesAutoresizingMaskIntoConstraints = false
             card.addSubview(subview)
         }
@@ -808,11 +847,10 @@ final class TypingSpeedSettingsViewController: NSViewController, TypingPracticeT
             hint.leadingAnchor.constraint(greaterThanOrEqualTo: title.trailingAnchor, constant: 10),
             hint.trailingAnchor.constraint(equalTo: gridButton.leadingAnchor, constant: -10),
             hint.centerYAnchor.constraint(equalTo: gridButton.centerYAnchor),
-            scroll.leadingAnchor.constraint(equalTo: card.leadingAnchor, constant: 2),
-            scroll.trailingAnchor.constraint(equalTo: card.trailingAnchor, constant: -2),
-            scroll.topAnchor.constraint(equalTo: gridButton.bottomAnchor, constant: 5),
-            scroll.bottomAnchor.constraint(equalTo: card.bottomAnchor, constant: -6),
-            scroll.heightAnchor.constraint(greaterThanOrEqualToConstant: 150),
+            editor.leadingAnchor.constraint(equalTo: card.leadingAnchor, constant: 2),
+            editor.trailingAnchor.constraint(equalTo: card.trailingAnchor, constant: -2),
+            editor.topAnchor.constraint(equalTo: gridButton.bottomAnchor, constant: 5),
+            editor.bottomAnchor.constraint(equalTo: card.bottomAnchor, constant: -6),
         ])
         return card
     }
@@ -950,7 +988,18 @@ final class TypingSpeedSettingsViewController: NSViewController, TypingPracticeT
     func smokeToggleCells() { toggleCells() }
     func smokeToggleMaterials() { setMaterialsCollapsed(!materials.isCollapsed, animated: false) }
     var smokeCellsHidden: Bool { cellsHidden }
-    var smokeTargetScroll: NSScrollView? { editor.enclosingScrollView }
+    var smokeMaterialsButtonShown: Bool { !materialsButton.isHidden }
+    var smokeMaterialsDividerShown: Bool { !materialsDivider.isHidden }
+    private func smokeFrame(_ target: NSView) -> NSRect { target.convert(target.bounds, to: view) }
+    var smokeChartFrame: NSRect? { speedChart.window == nil && speedChart.superview == nil ? nil : smokeFrame(speedChart) }
+    var smokeReadingFrame: NSRect? {
+        var union: NSRect?
+        for card in [speedCard, keysCard, backspaceCard, accuracyCard] {
+            let frame = smokeFrame(card)
+            union = union.map { $0.union(frame) } ?? frame
+        }
+        return union
+    }
     var smokeTrack: TypingTestTrackTextView { editor }
     var smokeTargetString: String { String(editor.sourceCharacters) }
     var smokeEditor: TypingTestTextView { editor }
@@ -992,9 +1041,10 @@ private final class TypingTestPageScrollView: NSScrollView {
         borderType = .noBorder
         document.translatesAutoresizingMaskIntoConstraints = false
         documentView = document
-        let fillHeight = document.heightAnchor.constraint(equalTo: contentView.heightAnchor)
+        // At least as tall as the viewport, never pulling the viewport taller: the
+        // content (the whole text) may exceed it, and then the page scrolls.
+        let fillHeight = document.heightAnchor.constraint(greaterThanOrEqualTo: contentView.heightAnchor)
         let fillWidth = document.widthAnchor.constraint(equalTo: contentView.widthAnchor)
-        fillHeight.priority = .defaultHigh
         fillWidth.priority = .defaultHigh
         NSLayoutConstraint.activate([
             document.leadingAnchor.constraint(equalTo: contentView.leadingAnchor),
@@ -1035,6 +1085,7 @@ private final class TypingTestDividerView: NSView {
 
 /// Compact measurement used by both pages: a caption over a value and unit.
 final class TypingTestStatTile: NSView {
+    static let height: CGFloat = 56
     private let surface = TypingTestStatSurface()
     private let caption = NSTextField(labelWithString: "")
     private let valueLabel = NSTextField(labelWithString: "—")
@@ -1074,7 +1125,7 @@ final class TypingTestStatTile: NSView {
             stack.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 9),
             stack.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -5),
             stack.centerYAnchor.constraint(equalTo: centerYAnchor),
-            heightAnchor.constraint(equalToConstant: 56),
+            heightAnchor.constraint(equalToConstant: Self.height),
         ])
         setAccessibilityElement(true)
         setAccessibilityRole(.staticText)

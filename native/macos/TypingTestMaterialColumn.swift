@@ -3,10 +3,10 @@ import AppKit
 /// Right-hand material sidebar of the typing practice page. Two tabs: 文章 shows
 /// the built-in articles as cards; 书籍 shows the imported books as cards and,
 /// once one is opened, a flat numbered list of its pieces. The collapse control
-/// lives here, in the sidebar, and folds it to a thin rail.
+/// lives here, in the sidebar, and hides it completely; the page header offers
+/// the way back.
 final class TypingTestMaterialColumn: NSView, NSTableViewDataSource, NSTableViewDelegate {
     static let preferredWidth: CGFloat = 224
-    static let railWidth: CGFloat = 34
 
     private enum Tab: Int { case articles = 0, books = 1 }
     private enum Row {
@@ -126,8 +126,7 @@ final class TypingTestMaterialColumn: NSView, NSTableViewDataSource, NSTableView
         footer = footerStack
 
         // Content keeps its natural width inside a clipped outer view anchored to
-        // the trailing edge, so the column can fold to a rail and its collapse
-        // button (at the trailing edge) stays visible.
+        // the trailing edge, so the column can fold away without its content reflowing.
         let inner = NSView()
         inner.translatesAutoresizingMaskIntoConstraints = false
         addSubview(inner)
@@ -164,28 +163,32 @@ final class TypingTestMaterialColumn: NSView, NSTableViewDataSource, NSTableView
         applyCollapsedAppearance()
     }
 
-    /// Folds the sidebar to a thin rail (or opens it again).
+    /// Hides the sidebar completely (or brings it back). Nothing is left behind:
+    /// the page reopens it from its own header.
     func setCollapsed(_ collapsed: Bool, animated: Bool = true) {
         guard collapsed != isCollapsed else { return }
         isCollapsed = collapsed
         applyCollapsedAppearance()
-        let width = collapsed ? Self.railWidth : Self.preferredWidth
+        let width = collapsed ? 0 : Self.preferredWidth
         if animated {
-            NSAnimationContext.runAnimationGroup { context in
+            if !collapsed { isHidden = false }
+            NSAnimationContext.runAnimationGroup({ context in
                 context.duration = 0.18
                 context.allowsImplicitAnimation = true
                 widthConstraint.animator().constant = width
-            }
+            }, completionHandler: { [weak self] in
+                guard let self, self.isCollapsed == collapsed else { return }
+                self.isHidden = collapsed
+            })
         } else {
             widthConstraint.constant = width
+            isHidden = collapsed
         }
     }
 
     private func applyCollapsedAppearance() {
-        for view in [titleLabel, importButton, tabs, scroll!, footer!] as [NSView] { view.isHidden = isCollapsed }
-        collapseButton.image = NSImage(systemSymbolName: isCollapsed ? "chevron.left" : "chevron.right",
-                                       accessibilityDescription: "素材栏")
-        collapseButton.toolTip = isCollapsed ? "展开素材栏" : "收起素材栏"
+        collapseButton.image = NSImage(systemSymbolName: "sidebar.right", accessibilityDescription: "素材栏")
+        collapseButton.toolTip = "收起素材栏"
         collapseButton.setAccessibilityLabel(collapseButton.toolTip)
     }
 

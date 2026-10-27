@@ -21,7 +21,7 @@ struct TypingTestBook: Codable, Equatable, Identifiable {
     /// re-importing the same file replaces an older cut, and results recorded
     /// against the old text stay under their own article version.
     var cut = TypingTestBook.currentCut
-    static let currentCut = 2
+    static let currentCut = 3
     /// First 16 hex characters of the SHA-256 of the imported file.
     var id: String
     var title: String
@@ -45,7 +45,7 @@ struct TypingTestBook: Codable, Equatable, Identifiable {
     }
 
     var passageCount: Int { chapters.reduce(0) { $0 + $1.passages.count } }
-    var characterCount: Int { chapters.reduce(0) { $0 + $1.passages.reduce(0) { $0 + $1.count } } }
+    var characterCount: Int { chapters.reduce(0) { $0 + $1.passages.reduce(0) { $0 + TypingTestPassageSplitter.typedLength($1) } } }
 
     /// Article identities are positional (`epub.<book>.<n>`, n starts at 1).
     /// The cut points are persisted, so the numbering never shifts when the
@@ -178,16 +178,29 @@ enum TypingTestPassageSplitter {
     static let pieceLimit = 1_000          // upper bound for validation, either script
     static let minimumPiece = 150
 
+    /// Characters that are actually typed: paragraph breaks (`\n`) are layout.
+    static func typedLength(_ text: String) -> Int {
+        text.utf8.contains(10) ? text.reduce(0) { $0 + ($1 == "\n" ? 0 : 1) } : text.count
+    }
+
+    /// Chinese pieces keep their paragraph breaks as `\n` so the practice view can
+    /// indent each paragraph; English paragraphs are joined by a typed space.
     static func passages(from paragraphs: [String]) -> [String] {
         let wide = language(of: paragraphs.joined()) == .chinese
         let limit = pieceLimit(wide: wide)
-        let separator = wide ? "" : " "
+        let separator = wide ? "\n" : " "
+        let gap = wide ? 0 : 1
         var result: [String] = []
-        var current = ""
-        func flush() {
-            let trimmed = current.trimmingCharacters(in: .whitespaces)
+        var current: [String] = []
+        var currentCount = 0
+        func emit(_ text: String) {
+            let trimmed = text.trimmingCharacters(in: .whitespaces)
             if !trimmed.isEmpty { result.append(trimmed) }
-            current = ""
+        }
+        func flush() {
+            emit(current.joined(separator: separator))
+            current = []
+            currentCount = 0
         }
         for paragraph in paragraphs {
             if paragraph.count > limit {
@@ -195,23 +208,25 @@ enum TypingTestPassageSplitter {
                 flush()
                 let parts = Int((Double(paragraph.count) / Double(limit)).rounded(.up))
                 let target = Int((Double(paragraph.count) / Double(parts)).rounded(.up))
+                var part = ""
                 for sentence in sentences(of: paragraph) {
                     for piece in sentence.count > limit ? hardCut(sentence, limit: limit) : [sentence] {
-                        if current.count >= target || current.count + piece.count > limit { flush() }
-                        current += piece
+                        if part.count >= target || part.count + piece.count > limit { emit(part); part = "" }
+                        part += piece
                     }
                 }
-                flush()
+                emit(part)
                 continue
             }
-            if !current.isEmpty, current.count + separator.count + paragraph.count > limit { flush() }
-            if !current.isEmpty { current += separator }
-            current += paragraph
+            if !current.isEmpty, currentCount + gap + paragraph.count > limit { flush() }
+            currentCount += (current.isEmpty ? 0 : gap) + paragraph.count
+            current.append(paragraph)
         }
         flush()
         // A tiny trailing piece reads better attached to the one before it.
-        if result.count > 1, let last = result.last, last.count < minimumPiece,
-           let previous = result.dropLast().last, previous.count + last.count + separator.count <= limit + limit / 6 {
+        if result.count > 1, let last = result.last, typedLength(last) < minimumPiece,
+           let previous = result.dropLast().last,
+           typedLength(previous) + typedLength(last) + gap <= limit + limit / 6 {
             result.removeLast(2)
             result.append(previous + separator + last)
         }

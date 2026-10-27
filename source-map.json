@@ -364,6 +364,13 @@
       ]
     },
     {
+      "source": "native/macos/TypingTestTrackView.swift",
+      "destination": "Sources/RimeBuffer/TypingTestTrackView.swift",
+      "plugins": [
+        "builtin.typing-speed"
+      ]
+    },
+    {
       "source": "native/macos/YearHistoryHeatmapView.swift",
       "destination": "Sources/RimeBuffer/YearHistoryHeatmapView.swift",
       "plugins": [

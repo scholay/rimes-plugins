@@ -17,12 +17,32 @@ struct TypingTestBook: Codable, Equatable, Identifiable {
     }
 
     var version = 1
+    /// Which cutting rules produced the passages. Bumped when the rules change, so
+    /// re-importing the same file replaces an older cut, and results recorded
+    /// against the old text stay under their own article version.
+    var cut = TypingTestBook.currentCut
+    static let currentCut = 2
     /// First 16 hex characters of the SHA-256 of the imported file.
     var id: String
     var title: String
     var author: String
     var importedAt: TimeInterval
     var chapters: [Chapter]
+
+    init(id: String, title: String, author: String, importedAt: TimeInterval, chapters: [Chapter]) {
+        self.id = id; self.title = title; self.author = author; self.importedAt = importedAt; self.chapters = chapters
+    }
+    private enum CodingKeys: String, CodingKey { case version, cut, id, title, author, importedAt, chapters }
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        version = try c.decode(Int.self, forKey: .version)
+        cut = try c.decodeIfPresent(Int.self, forKey: .cut) ?? 1
+        id = try c.decode(String.self, forKey: .id)
+        title = try c.decode(String.self, forKey: .title)
+        author = try c.decode(String.self, forKey: .author)
+        importedAt = try c.decode(TimeInterval.self, forKey: .importedAt)
+        chapters = try c.decode([Chapter].self, forKey: .chapters)
+    }
 
     var passageCount: Int { chapters.reduce(0) { $0 + $1.passages.count } }
     var characterCount: Int { chapters.reduce(0) { $0 + $1.passages.reduce(0) { $0 + $1.count } } }
@@ -36,7 +56,7 @@ struct TypingTestBook: Codable, Equatable, Identifiable {
         let text = chapters[chapter].passages[passage]
         let count = chapters[chapter].passages.count
         return TypingTestArticle(
-            id: "epub.\(id).\(before + passage + 1)", version: 1,
+            id: "epub.\(id).\(before + passage + 1)", version: cut,
             language: TypingTestPassageSplitter.language(of: text),
             title: count > 1 ? "\(title) · \(chapters[chapter].title) · \(passage + 1)/\(count)"
                              : "\(title) · \(chapters[chapter].title)",
@@ -57,6 +77,12 @@ struct TypingTestBook: Codable, Equatable, Identifiable {
 // MARK: - Passage cutting
 
 enum TypingTestPassageSplitter {
+    /// Letters and ideographs, with a cheap path for ASCII (Unicode properties are slow in bulk).
+    static func isLetter(_ scalar: Unicode.Scalar) -> Bool {
+        if scalar.value < 128 { return (65...90).contains(scalar.value) || (97...122).contains(scalar.value) }
+        return isIdeograph(scalar) || scalar.properties.isAlphabetic
+    }
+
     static func isIdeograph(_ scalar: Unicode.Scalar) -> Bool {
         (0x3400...0x9FFF).contains(scalar.value) || (0xF900...0xFAFF).contains(scalar.value)
             || (0x20000...0x2FA1F).contains(scalar.value)
@@ -71,7 +97,7 @@ enum TypingTestPassageSplitter {
         var wide = 0, latin = 0
         for scalar in text.unicodeScalars {
             if isIdeograph(scalar) { wide += 1 }
-            else if scalar.properties.isAlphabetic { latin += 1 }
+            else if isLetter(scalar) { latin += 1 }
         }
         return wide >= latin && wide > 0 ? .chinese : .english
     }
@@ -144,17 +170,18 @@ enum TypingTestPassageSplitter {
         return pieces
     }
 
-    /// One chapter is one practice piece. A chapter longer than `pieceLimit`
-    /// (kept below the session's 2,048-character cap) is cut at sentence ends
-    /// into the fewest, evenly sized parts.
-    static let pieceLimit = 2_000
+    /// Pieces stay short enough to type in one sitting and end on a paragraph
+    /// boundary whenever they can. A paragraph longer than the limit is cut at
+    /// sentence ends into evenly sized parts. All limits are far below the
+    /// session's 2,048-character cap.
+    static func pieceLimit(wide: Bool) -> Int { wide ? 800 : 1_000 }
+    static let pieceLimit = 1_000          // upper bound for validation, either script
+    static let minimumPiece = 150
 
     static func passages(from paragraphs: [String]) -> [String] {
-        let wideText = language(of: paragraphs.joined()) == .chinese
-        let separator = wideText ? "" : " "
-        let total = paragraphs.reduce(0) { $0 + $1.count + separator.count }
-        let parts = max(1, Int((Double(total) / Double(pieceLimit)).rounded(.up)))
-        let target = Int((Double(total) / Double(parts)).rounded(.up))
+        let wide = language(of: paragraphs.joined()) == .chinese
+        let limit = pieceLimit(wide: wide)
+        let separator = wide ? "" : " "
         var result: [String] = []
         var current = ""
         func flush() {
@@ -163,21 +190,73 @@ enum TypingTestPassageSplitter {
             current = ""
         }
         for paragraph in paragraphs {
-            for sentence in sentences(of: paragraph) {
-                for piece in sentence.count > pieceLimit ? hardCut(sentence, limit: pieceLimit) : [sentence] {
-                    if current.count >= target || current.count + piece.count > pieceLimit { flush() }
-                    current += piece
+            if paragraph.count > limit {
+                // Long paragraph: its own run of balanced parts, cut at sentence ends.
+                flush()
+                let parts = Int((Double(paragraph.count) / Double(limit)).rounded(.up))
+                let target = Int((Double(paragraph.count) / Double(parts)).rounded(.up))
+                for sentence in sentences(of: paragraph) {
+                    for piece in sentence.count > limit ? hardCut(sentence, limit: limit) : [sentence] {
+                        if current.count >= target || current.count + piece.count > limit { flush() }
+                        current += piece
+                    }
                 }
+                flush()
+                continue
             }
-            if !current.isEmpty, !current.hasSuffix(" ") { current += separator }
+            if !current.isEmpty, current.count + separator.count + paragraph.count > limit { flush() }
+            if !current.isEmpty { current += separator }
+            current += paragraph
         }
         flush()
-        if result.count > 1, let last = result.last, last.count < 60,
-           let previous = result.dropLast().last, previous.count + last.count + separator.count <= pieceLimit {
+        // A tiny trailing piece reads better attached to the one before it.
+        if result.count > 1, let last = result.last, last.count < minimumPiece,
+           let previous = result.dropLast().last, previous.count + last.count + separator.count <= limit + limit / 6 {
             result.removeLast(2)
             result.append(previous + separator + last)
         }
         return result
+    }
+
+    // MARK: Practice-friendly text
+
+    private static let decorative: Set<UInt32> = Set("※★☆◆◇■□●○◎◈▲△▼▽♦♠♥♣▶◀►◄〓§¶†‡".unicodeScalars.map(\.value))
+    private static let repeatable: Set<Character> = ["，", "。", "！", "？", "；", "：", "、", ",", ".", "!", "?", ";", ":", "-", "_", "=", "*", "~", "～", "·"]
+
+    private static let linkPattern = try! NSRegularExpression(pattern: #"https?://\S+|www\.\S+|\S+@\S+\.\S+"#)
+    private static let footnotePattern = try! NSRegularExpression(pattern: #"[\[［【(（]\s*(注\s*)?\d{1,3}\s*[\]］】)）]"#)
+    private static let rulePattern = try! NSRegularExpression(pattern: #"[\-_=*~～]{2,}"#)
+    private static func strip(_ expression: NSRegularExpression, from text: String) -> String {
+        expression.stringByReplacingMatches(in: text, range: NSRange(text.startIndex..., in: text), withTemplate: "")
+    }
+
+    /// Removes what is awkward to type and carries no reading value: decorative
+    /// symbols, footnote markers, links and addresses, rules made of symbols, and
+    /// runs of repeated punctuation.
+    static func practiceText(_ paragraph: String) -> String {
+        // The address pattern backtracks badly on long unspaced text; only run it when a hint is present.
+        let mayHaveLink = paragraph.contains("@") || paragraph.contains("http") || paragraph.contains("www.")
+        var text = strip(footnotePattern, from: mayHaveLink ? strip(linkPattern, from: paragraph) : paragraph)
+        text = String(String.UnicodeScalarView(text.unicodeScalars.filter { !decorative.contains($0.value) }))
+        var out: [Character] = []
+        for character in text {
+            if let last = out.last, last == character, repeatable.contains(character) { continue }
+            out.append(character)
+        }
+        return tidy(strip(rulePattern, from: String(out)))
+    }
+
+    /// Share of characters that are neither letters, ideographs nor spaces.
+    static func symbolRatio(_ text: String) -> Double {
+        guard !text.isEmpty else { return 1 }
+        let symbols = text.unicodeScalars.filter { !(isLetter($0) || $0 == " ") }.count
+        return Double(symbols) / Double(text.unicodeScalars.count)
+    }
+
+    /// True for a paragraph worth practising: enough letters or ideographs.
+    static func isReadable(_ paragraph: String) -> Bool {
+        paragraph.unicodeScalars.filter { isLetter($0) }.count >= 4
+            && symbolRatio(paragraph) <= 0.35
     }
 }
 
@@ -315,10 +394,13 @@ enum TypingTestEPUBImporter {
             let path = resolve(base: base, href: item.href)
             guard archive.contains(path), let document = decode(try archive.read(path)) else { continue }
             let extracted = HTMLText.extract(document)
-            let text = extracted.paragraphs.joined()
+            let raw = extracted.paragraphs
+            let paragraphs = raw.map(TypingTestPassageSplitter.practiceText).filter(TypingTestPassageSplitter.isReadable)
+            let text = paragraphs.joined()
             guard text.count >= minimumChapterCharacters,
-                  !isFrontMatter(heading: extracted.heading, first: extracted.paragraphs.first, count: text.count) else { continue }
-            let passages = TypingTestPassageSplitter.passages(from: extracted.paragraphs)
+                  !isFrontMatter(heading: extracted.heading, first: raw.first, count: text.count),
+                  !looksLikeCatalog(raw) else { continue }
+            let passages = TypingTestPassageSplitter.passages(from: paragraphs)
             guard !passages.isEmpty else { continue }
             totalCharacters += text.count
             totalPassages += passages.count
@@ -337,6 +419,16 @@ enum TypingTestEPUBImporter {
         return TypingTestBook(id: digest, title: title.isEmpty ? "未命名图书" : String(title.prefix(80)),
                               author: String(TypingTestPassageSplitter.tidy(package.author).prefix(60)),
                               importedAt: importedAt, chapters: chapters)
+    }
+
+    /// A contents page is many short lines, mostly titles and numbers.
+    private static func looksLikeCatalog(_ paragraphs: [String]) -> Bool {
+        guard paragraphs.count >= 8 else { return false }
+        let average = Double(paragraphs.reduce(0) { $0 + $1.count }) / Double(paragraphs.count)
+        let shortLines = paragraphs.filter { $0.count <= 24 }.count
+        let numbered = paragraphs.filter { $0.last?.isNumber == true || $0.first?.isNumber == true }.count
+        return (average < 18 && shortLines * 10 >= paragraphs.count * 8)
+            || (shortLines * 10 >= paragraphs.count * 9 && numbered * 10 >= paragraphs.count * 5)
     }
 
     /// Contents, copyright and similar short pages are not reading material.
@@ -560,7 +652,7 @@ final class TypingTestLibraryStore {
     static let maximumBooks = 40
     static let maximumBookBytes = 12 * 1_048_576
 
-    enum ImportOutcome { case added(TypingTestBook), alreadyPresent(TypingTestBook) }
+    enum ImportOutcome { case added(TypingTestBook), replaced(TypingTestBook), alreadyPresent(TypingTestBook) }
     enum LibraryError: LocalizedError {
         case libraryFull, unreadable
         var errorDescription: String? {
@@ -627,16 +719,20 @@ final class TypingTestLibraryStore {
 
     @discardableResult
     func add(_ book: TypingTestBook) throws -> ImportOutcome {
-        if let existing = self.book(id: book.id) { return .alreadyPresent(existing) }
-        guard books.count < Self.maximumBooks else { throw LibraryError.libraryFull }
+        let existing = self.book(id: book.id)
+        // The same file imported again only replaces the stored text when the
+        // cutting rules have moved on (an older cut of the same book).
+        if let existing, existing.cut >= book.cut { return .alreadyPresent(existing) }
+        guard existing != nil || books.count < Self.maximumBooks else { throw LibraryError.libraryFull }
         guard Self.valid(book) else { throw TypingTestEPUBError.tooLarge }
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.sortedKeys]
         try LocalMetricsFileSecurity.write(try encoder.encode(book), to: directory.appendingPathComponent(book.id + ".json"),
                                            maximumBytes: Self.maximumBookBytes)
+        books.removeAll { $0.id == book.id }
         books.insert(book, at: 0)
         NotificationCenter.default.post(name: .typingTestLibraryDidChange, object: self)
-        return .added(book)
+        return existing == nil ? .added(book) : .replaced(book)
     }
 
     @discardableResult
@@ -651,11 +747,11 @@ final class TypingTestLibraryStore {
     }
 
     static func valid(_ book: TypingTestBook) -> Bool {
-        book.version == 1 && book.id.count == 16 && book.id.allSatisfy(\.isHexDigit)
+        book.version == 1 && book.cut >= 1 && book.id.count == 16 && book.id.allSatisfy(\.isHexDigit)
             && !book.chapters.isEmpty && book.passageCount <= TypingTestEPUBImporter.maximumPassages
             && book.chapters.allSatisfy { chapter in
                 !chapter.passages.isEmpty && chapter.passages.allSatisfy {
-                    !$0.isEmpty && $0.count <= TypingTestPassageSplitter.pieceLimit && $0.utf8.count <= TypingTestSession.maximumTextBytes
+                    !$0.isEmpty && $0.count <= TypingTestPassageSplitter.pieceLimit * 2 && $0.utf8.count <= TypingTestSession.maximumTextBytes
                 }
             }
     }

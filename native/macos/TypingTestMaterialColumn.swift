@@ -1,41 +1,24 @@
 import AppKit
 
-/// Left-hand material column of the typing practice page: built-in articles and
-/// imported books (book → chapter → passage). Only articles and passages are
-/// selectable; books and chapters expand and collapse.
-final class TypingTestMaterialColumn: NSView, NSOutlineViewDataSource, NSOutlineViewDelegate {
-    static let preferredWidth: CGFloat = 204
+/// Right-hand material sidebar of the typing practice page. Two tabs: 文章 shows
+/// the built-in articles as cards; 书籍 shows the imported books as cards and,
+/// once one is opened, a flat numbered list of its pieces. The collapse control
+/// lives here, in the sidebar, and folds it to a thin rail.
+final class TypingTestMaterialColumn: NSView, NSTableViewDataSource, NSTableViewDelegate {
+    static let preferredWidth: CGFloat = 224
+    static let railWidth: CGFloat = 34
 
-    private final class Node: NSObject {
-        enum Kind {
-            case section(String)
-            case article(TypingTestArticle)
-            case book(TypingTestBook)
-            case chapter(TypingTestBook, Int)
-            case passage(TypingTestArticle, bookID: String, label: String, indent: CGFloat)
-        }
-        let kind: Kind
-        let children: () -> [Node]
-        private var cache: [Node]?
-        var loadedChildren: [Node] { if let cache { return cache }; let built = children(); cache = built; return built }
-        init(_ kind: Kind, children: @escaping () -> [Node] = { [] }) { self.kind = kind; self.children = children }
+    private enum Tab: Int { case articles = 0, books = 1 }
+    private enum Row {
+        case article(TypingTestArticle)
+        case book(TypingTestBook)
+        case back(TypingTestBook)
+        case piece(TypingTestArticle, label: String)
+        case hint(String)
         var article: TypingTestArticle? {
-            switch kind {
-            case let .article(article), let .passage(article, _, _, _): return article
+            switch self {
+            case let .article(article), let .piece(article, _): return article
             default: return nil
-            }
-        }
-        var bookID: String? {
-            switch kind {
-            case let .book(book), let .chapter(book, _): return book.id
-            case let .passage(_, bookID, _, _): return bookID
-            default: return nil
-            }
-        }
-        var isExpandable: Bool {
-            switch kind {
-            case .section, .book, .chapter: return true
-            default: return false
             }
         }
     }
@@ -44,16 +27,29 @@ final class TypingTestMaterialColumn: NSView, NSOutlineViewDataSource, NSOutline
     var onImport: (() -> Void)?
     var onRemoveBook: ((TypingTestBook) -> Void)?
     var onDropFiles: (([URL]) -> Void)?
-    var isEditingEnabled = true { didSet { importButton.isEnabled = isEditingEnabled; outline.isEnabled = isEditingEnabled; updateRemoveButton() } }
+    var onCollapsedChange: ((Bool) -> Void)?
+    var isEditingEnabled = true {
+        didSet { importButton.isEnabled = isEditingEnabled; table.isEnabled = isEditingEnabled; updateRemoveButton() }
+    }
 
     private let library: TypingTestLibraryStore
-    private let outline = NSOutlineView()
+    private let table = NSTableView()
+    private let tabs = NSSegmentedControl(labels: ["文章", "书籍"], trackingMode: .selectOne, target: nil, action: nil)
+    private let titleLabel = NSTextField(labelWithString: "素材")
     private let importButton = RimePointingHandButton(title: "", target: nil, action: nil)
+    private let collapseButton = RimePointingHandButton(title: "", target: nil, action: nil)
     private let removeButton = RimePointingHandButton(title: "移除此书", target: nil, action: nil)
     private let caption = NSTextField(wrappingLabelWithString: "")
-    private var roots: [Node] = []
+    private var scroll: NSScrollView!
+    private var footer: NSView!
+    private var rows: [Row] = []
+    private var tab: Tab = .articles
+    private var openBook: TypingTestBook?
     private var suppressSelection = false
+    private var statusOverride: String?
+    private var widthConstraint: NSLayoutConstraint!
     private(set) var currentArticleID: String?
+    private(set) var isCollapsed = false
 
     init(library: TypingTestLibraryStore) {
         self.library = library
@@ -69,9 +65,8 @@ final class TypingTestMaterialColumn: NSView, NSOutlineViewDataSource, NSOutline
     // MARK: Layout
 
     private func build() {
-        let title = NSTextField(labelWithString: "素材")
-        title.font = .systemFont(ofSize: 13, weight: .semibold)
-        title.textColor = RimeUI.textPrimary
+        titleLabel.font = .systemFont(ofSize: 13, weight: .semibold)
+        titleLabel.textColor = RimeUI.textPrimary
         importButton.target = self
         importButton.action = #selector(importTapped)
         importButton.bezelStyle = .rounded
@@ -79,34 +74,37 @@ final class TypingTestMaterialColumn: NSView, NSOutlineViewDataSource, NSOutline
         importButton.image = NSImage(systemSymbolName: "plus", accessibilityDescription: "导入 EPUB 电子书")
         importButton.imagePosition = .imageOnly
         importButton.setAccessibilityLabel("导入 EPUB 电子书")
-        importButton.toolTip = "导入 EPUB 电子书，切分为跟打段落；也可以把 .epub 文件拖到这里"
+        importButton.toolTip = "导入 EPUB 电子书，每章成为一份素材；也可以把 .epub 文件拖到这里"
         importButton.refusesFirstResponder = true
-        let header = NSStackView(views: [title, NSView(), importButton])
-        header.orientation = .horizontal
-        header.alignment = .centerY
-        header.translatesAutoresizingMaskIntoConstraints = false
+        collapseButton.target = self
+        collapseButton.action = #selector(collapseTapped)
+        collapseButton.bezelStyle = .rounded
+        collapseButton.controlSize = .small
+        collapseButton.imagePosition = .imageOnly
+        collapseButton.refusesFirstResponder = true
+        tabs.target = self
+        tabs.action = #selector(tabChanged)
+        tabs.segmentStyle = .rounded
+        tabs.controlSize = .small
+        tabs.selectedSegment = 0
+        tabs.setAccessibilityLabel("素材类型")
 
         let column = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("material"))
         column.resizingMask = .autoresizingMask
-        outline.addTableColumn(column)
-        outline.outlineTableColumn = column
-        outline.headerView = nil
-        outline.backgroundColor = .clear
-        outline.rowSizeStyle = .custom
-        outline.rowHeight = 24
-        outline.indentationPerLevel = 0   // cards fill the row; nested rows indent themselves
-        outline.intercellSpacing = NSSize(width: 0, height: 1)
-        outline.selectionHighlightStyle = .regular
-        outline.floatsGroupRows = false
-        outline.columnAutoresizingStyle = .uniformColumnAutoresizingStyle
-        outline.dataSource = self
-        outline.delegate = self
-        outline.setAccessibilityLabel("素材列表")
-        let scroll = NSScrollView()
-        scroll.documentView = outline
+        table.addTableColumn(column)
+        table.headerView = nil
+        table.backgroundColor = .clear
+        table.rowSizeStyle = .custom
+        table.intercellSpacing = NSSize(width: 0, height: 0)
+        table.selectionHighlightStyle = .regular
+        table.columnAutoresizingStyle = .uniformColumnAutoresizingStyle
+        table.dataSource = self
+        table.delegate = self
+        table.setAccessibilityLabel("素材列表")
+        scroll = NSScrollView()
+        scroll.documentView = table
         scroll.drawsBackground = false
         scroll.hasVerticalScroller = true
-        scroll.hasHorizontalScroller = false
         scroll.autohidesScrollers = true
         scroll.borderType = .noBorder
         scroll.translatesAutoresizingMaskIntoConstraints = false
@@ -120,51 +118,58 @@ final class TypingTestMaterialColumn: NSView, NSOutlineViewDataSource, NSOutline
         caption.font = .systemFont(ofSize: 11)
         caption.textColor = RimeUI.textSecondary
         caption.maximumNumberOfLines = 3
-        caption.preferredMaxLayoutWidth = Self.preferredWidth - 22
-        let footer = NSStackView(views: [caption, removeButton])
-        footer.orientation = .vertical
-        footer.alignment = .leading
-        footer.spacing = 6
-        footer.translatesAutoresizingMaskIntoConstraints = false
+        caption.preferredMaxLayoutWidth = Self.preferredWidth - 26
+        let footerStack = NSStackView(views: [caption, removeButton])
+        footerStack.orientation = .vertical
+        footerStack.alignment = .leading
+        footerStack.spacing = 6
+        footer = footerStack
 
-        // Content keeps its natural width inside a clipped outer view, so the
-        // column can fold to nothing without breaking its own constraints.
+        // Content keeps its natural width inside a clipped outer view anchored to
+        // the trailing edge, so the column can fold to a rail and its collapse
+        // button (at the trailing edge) stays visible.
         let inner = NSView()
         inner.translatesAutoresizingMaskIntoConstraints = false
         addSubview(inner)
-        inner.addSubview(header)
-        inner.addSubview(scroll)
-        inner.addSubview(footer)
+        for view in [titleLabel, importButton, collapseButton, tabs, scroll!, footerStack] as [NSView] {
+            view.translatesAutoresizingMaskIntoConstraints = false
+            inner.addSubview(view)
+        }
         wantsLayer = true
         layer?.masksToBounds = true
         widthConstraint = widthAnchor.constraint(equalToConstant: Self.preferredWidth)
         NSLayoutConstraint.activate([
-            inner.leadingAnchor.constraint(equalTo: leadingAnchor),
+            inner.trailingAnchor.constraint(equalTo: trailingAnchor),
             inner.topAnchor.constraint(equalTo: topAnchor),
             inner.bottomAnchor.constraint(equalTo: bottomAnchor),
             inner.widthAnchor.constraint(equalToConstant: Self.preferredWidth),
-            header.leadingAnchor.constraint(equalTo: inner.leadingAnchor, constant: 12),
-            header.trailingAnchor.constraint(equalTo: inner.trailingAnchor, constant: -8),
-            header.topAnchor.constraint(equalTo: inner.topAnchor, constant: 12),
+            collapseButton.trailingAnchor.constraint(equalTo: inner.trailingAnchor, constant: -5),
+            collapseButton.topAnchor.constraint(equalTo: inner.topAnchor, constant: 12),
+            importButton.trailingAnchor.constraint(equalTo: collapseButton.leadingAnchor, constant: -6),
+            importButton.centerYAnchor.constraint(equalTo: collapseButton.centerYAnchor),
+            titleLabel.leadingAnchor.constraint(equalTo: inner.leadingAnchor, constant: 14),
+            titleLabel.centerYAnchor.constraint(equalTo: collapseButton.centerYAnchor),
+            tabs.leadingAnchor.constraint(equalTo: inner.leadingAnchor, constant: 12),
+            tabs.trailingAnchor.constraint(equalTo: inner.trailingAnchor, constant: -12),
+            tabs.topAnchor.constraint(equalTo: collapseButton.bottomAnchor, constant: 10),
             scroll.leadingAnchor.constraint(equalTo: inner.leadingAnchor, constant: 4),
-            scroll.trailingAnchor.constraint(equalTo: inner.trailingAnchor, constant: -2),
-            scroll.topAnchor.constraint(equalTo: header.bottomAnchor, constant: 8),
-            footer.leadingAnchor.constraint(equalTo: inner.leadingAnchor, constant: 12),
-            footer.trailingAnchor.constraint(equalTo: inner.trailingAnchor, constant: -10),
-            footer.topAnchor.constraint(equalTo: scroll.bottomAnchor, constant: 8),
-            footer.bottomAnchor.constraint(equalTo: inner.bottomAnchor, constant: -10),
+            scroll.trailingAnchor.constraint(equalTo: inner.trailingAnchor, constant: -4),
+            scroll.topAnchor.constraint(equalTo: tabs.bottomAnchor, constant: 8),
+            footerStack.leadingAnchor.constraint(equalTo: inner.leadingAnchor, constant: 14),
+            footerStack.trailingAnchor.constraint(equalTo: inner.trailingAnchor, constant: -12),
+            footerStack.topAnchor.constraint(equalTo: scroll.bottomAnchor, constant: 8),
+            footerStack.bottomAnchor.constraint(equalTo: inner.bottomAnchor, constant: -10),
             widthConstraint,
         ])
+        applyCollapsedAppearance()
     }
 
-    private var widthConstraint: NSLayoutConstraint!
-    private(set) var isCollapsed = false
-
-    /// Folds the column away (or back) so the practice area can use the space.
+    /// Folds the sidebar to a thin rail (or opens it again).
     func setCollapsed(_ collapsed: Bool, animated: Bool = true) {
         guard collapsed != isCollapsed else { return }
         isCollapsed = collapsed
-        let width = collapsed ? 0 : Self.preferredWidth
+        applyCollapsedAppearance()
+        let width = collapsed ? Self.railWidth : Self.preferredWidth
         if animated {
             NSAnimationContext.runAnimationGroup { context in
                 context.duration = 0.18
@@ -176,80 +181,79 @@ final class TypingTestMaterialColumn: NSView, NSOutlineViewDataSource, NSOutline
         }
     }
 
+    private func applyCollapsedAppearance() {
+        for view in [titleLabel, importButton, tabs, scroll!, footer!] as [NSView] { view.isHidden = isCollapsed }
+        collapseButton.image = NSImage(systemSymbolName: isCollapsed ? "chevron.left" : "chevron.right",
+                                       accessibilityDescription: "素材栏")
+        collapseButton.toolTip = isCollapsed ? "展开素材栏" : "收起素材栏"
+        collapseButton.setAccessibilityLabel(collapseButton.toolTip)
+    }
+
+    @objc private func collapseTapped() {
+        setCollapsed(!isCollapsed, animated: true)
+        onCollapsedChange?(isCollapsed)
+    }
+
     // MARK: Data
 
-    func reload() {
-        let selected = currentArticleID
-        let builtIn = Node(.section("内置文章")) { TypingTestArticles.all.map { Node(.article($0)) } }
-        roots = [builtIn]
-        if !library.books.isEmpty {
-            let mine = Node(.section("我的书籍 · \(library.books.count)")) { [library] in
-                library.books.map { book in
-                    Node(.book(book)) {
-                        book.chapters.indices.map { index in
-                            let parts = book.chapters[index].passages.count
-                            // A chapter that is one piece is selectable itself; several parts expand.
-                            if parts == 1, let article = book.article(chapter: index, passage: 0) {
-                                return Node(.passage(article, bookID: book.id, label: book.chapters[index].title, indent: 24))
-                            }
-                            return Node(.chapter(book, index)) {
-                                book.chapters[index].passages.indices.compactMap { passage in
-                                    book.article(chapter: index, passage: passage).map {
-                                        Node(.passage($0, bookID: book.id, label: "第 \(passage + 1) / \(parts) 部分", indent: 36))
-                                    }
-                                }
-                            }
-                        }
+    private func rebuildRows() {
+        switch tab {
+        case .articles:
+            rows = TypingTestArticles.all.map(Row.article)
+        case .books:
+            if let book = openBook {
+                rows = [.back(book)]
+                for (index, chapter) in book.chapters.enumerated() {
+                    for passage in chapter.passages.indices {
+                        guard let article = book.article(chapter: index, passage: passage) else { continue }
+                        let parts = chapter.passages.count
+                        rows.append(.piece(article, label: parts > 1 ? "\(chapter.title) · \(passage + 1)/\(parts)" : chapter.title))
                     }
                 }
+            } else if library.books.isEmpty {
+                rows = [.hint("还没有书。点右上角的 + 导入 EPUB，每一章会成为一份带编号的素材。")]
+            } else {
+                rows = library.books.map(Row.book)
             }
-            roots.append(mine)
         }
+    }
+
+    func reload() {
+        if let open = openBook, library.book(id: open.id) == nil { openBook = nil }
+        tabs.setLabel(library.books.isEmpty ? "书籍" : "书籍 · \(library.books.count)", forSegment: 1)
+        tabs.selectedSegment = tab.rawValue
+        rebuildRows()
         suppressSelection = true
-        outline.reloadData()
-        roots.forEach { outline.expandItem($0) }
+        table.reloadData()
+        if let id = currentArticleID, let row = rows.firstIndex(where: { $0.article?.id == id }) {
+            table.selectRowIndexes(IndexSet(integer: row), byExtendingSelection: false)
+        }
         suppressSelection = false
-        if let selected { select(articleID: selected) }
         updateCaption()
         updateRemoveButton()
     }
 
-    /// Expands the path to an article and highlights it without notifying `onSelect`.
+    /// Shows the tab and book holding an article and highlights it, without notifying `onSelect`.
     func select(articleID: String) {
         currentArticleID = articleID
-        suppressSelection = true
-        defer { suppressSelection = false }
-        var path: [Node]?
-        func search(_ node: Node, _ trail: [Node]) {
-            guard path == nil else { return }
-            if node.article?.id == articleID { path = trail + [node]; return }
-            guard node.isExpandable else { return }
-            // Only imported ids can live below a book; avoid walking every passage of every book.
-            if case .book = node.kind, !articleID.hasPrefix("epub.\(node.bookID ?? "")") { return }
-            if case .chapter = node.kind, !articleID.hasPrefix("epub.\(node.bookID ?? "")") { return }
-            for child in node.loadedChildren { search(child, trail + [node]) }
+        let pieces = articleID.split(separator: ".")
+        if pieces.count == 3, pieces[0] == "epub", let book = library.book(id: String(pieces[1])) {
+            tab = .books
+            openBook = book
+        } else {
+            tab = .articles
         }
-        roots.forEach { search($0, []) }
-        guard let path, let target = path.last else { outline.deselectAll(nil); updateRemoveButton(); return }
-        path.dropLast().forEach { outline.expandItem($0) }
-        let row = outline.row(forItem: target)
-        if row >= 0 {
-            outline.selectRowIndexes(IndexSet(integer: row), byExtendingSelection: false)
-            outline.scrollRowToVisible(row)
-        }
-        updateRemoveButton()
+        reload()
+        if let row = rows.firstIndex(where: { $0.article?.id == articleID }) { table.scrollRowToVisible(row) }
     }
 
-    /// The book owning the current selection, for the remove button.
-    var selectedBook: TypingTestBook? {
-        guard let id = currentArticleID?.split(separator: ".").dropFirst().first.map(String.init),
-              currentArticleID?.hasPrefix("epub.") == true else { return nil }
-        return library.book(id: id)
-    }
+    /// The opened book, for the remove button.
+    var selectedBook: TypingTestBook? { tab == .books ? openBook : nil }
 
-    /// First passage of a book, used after an import.
+    /// First piece of a book, used after an import.
     func selectFirstPassage(of book: TypingTestBook) {
         guard let article = book.article(number: 1) else { return }
+        statusOverride = nil
         select(articleID: article.id)
         onSelect?(article)
     }
@@ -258,93 +262,112 @@ final class TypingTestMaterialColumn: NSView, NSOutlineViewDataSource, NSOutline
         statusOverride = text
         updateCaption()
     }
-    private var statusOverride: String?
 
     private func updateCaption() {
         if let statusOverride { caption.stringValue = statusOverride; return }
-        caption.stringValue = library.books.isEmpty
-            ? "导入 EPUB，把喜欢的书切成可跟打的段落。书籍只保存在本机。"
-            : "已导入 \(library.books.count) 本 · 共 \(library.books.reduce(0) { $0 + $1.passageCount }) 段"
+        switch tab {
+        case .articles: caption.stringValue = "内置文章 \(TypingTestArticles.all.count) 篇。"
+        case .books:
+            caption.stringValue = library.books.isEmpty ? "书籍只保存在本机，不会上传。"
+                : openBook == nil ? "已导入 \(library.books.count) 本 · 点书打开章节。" : "每章一份素材，过长的章节按段编号拆开。"
+        }
     }
     private func updateRemoveButton() { removeButton.isHidden = selectedBook == nil; removeButton.isEnabled = isEditingEnabled }
 
     @objc private func importTapped() { onImport?() }
     @objc private func removeTapped() { if let book = selectedBook { onRemoveBook?(book) } }
+    @objc private func tabChanged() {
+        tab = Tab(rawValue: tabs.selectedSegment) ?? .articles
+        statusOverride = nil
+        reload()
+    }
 
-    // MARK: Outline
+    // MARK: Table
 
-    func outlineView(_ outlineView: NSOutlineView, numberOfChildrenOfItem item: Any?) -> Int {
-        guard let node = item as? Node else { return roots.count }
-        return node.loadedChildren.count
-    }
-    func outlineView(_ outlineView: NSOutlineView, child index: Int, ofItem item: Any?) -> Any {
-        (item as? Node).map { $0.loadedChildren[index] } ?? roots[index]
-    }
-    func outlineView(_ outlineView: NSOutlineView, isItemExpandable item: Any) -> Bool { (item as? Node)?.isExpandable ?? false }
-    func outlineView(_ outlineView: NSOutlineView, isGroupItem item: Any) -> Bool {
-        if case .section = (item as? Node)?.kind { return true }
-        return false
-    }
-    func outlineView(_ outlineView: NSOutlineView, heightOfRowByItem item: Any) -> CGFloat {
-        guard let node = item as? Node else { return 24 }
-        switch node.kind {
-        case .section: return 26
+    func numberOfRows(in tableView: NSTableView) -> Int { rows.count }
+
+    func tableView(_ tableView: NSTableView, heightOfRow row: Int) -> CGFloat {
+        switch rows[row] {
         case .article: return 58
         case .book: return 54
-        default: return 24
+        case .back: return 32
+        case .piece: return 30
+        case .hint: return 76
         }
-    }
-    func outlineView(_ outlineView: NSOutlineView, shouldSelectItem item: Any) -> Bool {
-        guard let node = item as? Node else { return false }
-        if node.isExpandable {
-            // Clicking a section/book/chapter row folds it instead of selecting it.
-            if outlineView.isItemExpanded(node) { outlineView.collapseItem(node) } else { outlineView.expandItem(node) }
-            return false
-        }
-        return true
-    }
-    func outlineViewSelectionDidChange(_ notification: Notification) {
-        guard !suppressSelection, let node = outline.item(atRow: outline.selectedRow) as? Node,
-              let article = node.article else { return }
-        currentArticleID = article.id
-        updateRemoveButton()
-        onSelect?(article)
     }
 
-    /// Built-in articles and book headers are cards; chapters and passages stay compact rows.
-    func outlineView(_ outlineView: NSOutlineView, rowViewForItem item: Any) -> NSTableRowView? {
-        guard let node = item as? Node else { return nil }
-        switch node.kind {
-        case .article, .book:
-            let row = MaterialRowView()
-            row.isCard = true
-            row.isSelectableCard = node.article != nil
-            return row
+    func tableView(_ tableView: NSTableView, rowViewForRow row: Int) -> NSTableRowView? {
+        switch rows[row] {
+        case let .article(article):
+            let view = MaterialRowView(); view.isCard = true; view.isSelectableCard = true
+            _ = article; return view
+        case .book:
+            let view = MaterialRowView(); view.isCard = true; view.isSelectableCard = false
+            return view
         default: return nil
         }
     }
 
-    func outlineView(_ outlineView: NSOutlineView, viewFor tableColumn: NSTableColumn?, item: Any) -> NSView? {
-        guard let node = item as? Node else { return nil }
+    func tableView(_ tableView: NSTableView, shouldSelectRow row: Int) -> Bool {
+        switch rows[row] {
+        case .article, .piece: return true
+        case let .book(book):
+            openBook = book
+            statusOverride = nil
+            reload()
+            return false
+        case .back:
+            openBook = nil
+            statusOverride = nil
+            reload()
+            return false
+        case .hint: return false
+        }
+    }
+
+    func tableViewSelectionDidChange(_ notification: Notification) {
+        guard !suppressSelection, table.selectedRow >= 0, rows.indices.contains(table.selectedRow),
+              let article = rows[table.selectedRow].article else { return }
+        currentArticleID = article.id
+        statusOverride = nil
+        updateCaption()
+        onSelect?(article)
+    }
+
+    func tableView(_ tableView: NSTableView, viewFor tableColumn: NSTableColumn?, row: Int) -> NSView? {
+        if case let .hint(text) = rows[row] {
+            let label = NSTextField(wrappingLabelWithString: text)
+            label.font = .systemFont(ofSize: 12)
+            label.textColor = RimeUI.textSecondary
+            label.preferredMaxLayoutWidth = Self.preferredWidth - 40
+            let holder = NSTableCellView()
+            label.translatesAutoresizingMaskIntoConstraints = false
+            holder.addSubview(label)
+            NSLayoutConstraint.activate([
+                label.leadingAnchor.constraint(equalTo: holder.leadingAnchor, constant: 12),
+                label.trailingAnchor.constraint(equalTo: holder.trailingAnchor, constant: -12),
+                label.topAnchor.constraint(equalTo: holder.topAnchor, constant: 8),
+            ])
+            return holder
+        }
         let identifier = NSUserInterfaceItemIdentifier("material.cell")
-        let cell = (outlineView.makeView(withIdentifier: identifier, owner: self) as? MaterialCell) ?? {
+        let cell = (tableView.makeView(withIdentifier: identifier, owner: self) as? MaterialCell) ?? {
             let made = MaterialCell(); made.identifier = identifier; return made
         }()
-        switch node.kind {
-        case let .section(title): cell.configure(title: title, detail: nil, leading: 8, style: .section)
+        switch rows[row] {
         case let .article(article):
             cell.configure(title: article.title,
                            detail: "\(article.theme) · \(article.difficulty) · \(article.displayLength)",
                            leading: 14, style: .card)
         case let .book(book):
             cell.configure(title: book.title,
-                           detail: "\(book.chapters.count) 章 · \(book.passageCount) 段 · \(book.author.isEmpty ? "佚名" : book.author)",
-                           leading: 30, style: .card)
-        case let .chapter(book, index):
-            cell.configure(title: book.chapters[index].title, detail: "\(book.chapters[index].passages.count) 部分",
-                           leading: 24, style: .row)
-        case let .passage(article, _, label, indent):
-            cell.configure(title: label, detail: article.displayLength, leading: indent, style: .row)
+                           detail: "\(book.chapters.count) 章 · \(book.passageCount) 份 · \(book.author.isEmpty ? "佚名" : book.author)",
+                           leading: 14, style: .card)
+        case let .back(book):
+            cell.configure(title: "‹ 返回书架", detail: "\(book.title)", leading: 12, style: .row)
+        case let .piece(article, label):
+            cell.configure(title: label, detail: article.displayLength, leading: 12, style: .row)
+        case .hint: break
         }
         return cell
     }
@@ -368,9 +391,10 @@ final class TypingTestMaterialColumn: NSView, NSOutlineViewDataSource, NSOutline
 
     // MARK: Test hooks
 
-    var smokeRowCount: Int { outline.numberOfRows }
+    var smokeRowCount: Int { rows.count }
     var smokeWidth: CGFloat { frame.width }
-    var smokeOutline: NSOutlineView { outline }
+    var smokeTab: Int { tab.rawValue }
+    var smokeOpenBookTitle: String? { openBook?.title }
 }
 
 private final class MaterialCell: NSTableCellView {

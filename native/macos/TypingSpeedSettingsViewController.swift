@@ -35,8 +35,8 @@ final class TypingSpeedSettingsViewController: NSViewController, TypingPracticeT
     private let progressLabel = NSTextField(labelWithString: "0%")
     private let timeLabel = NSTextField(labelWithString: "00:00")
     private let progress = NSProgressIndicator()
-    private let targetText = NSTextView(frame: .zero)
-    private let editor = TypingTestTextView(frame: .zero, textContainer: nil)
+    private let editor = TypingTestTrackTextView(frame: .zero, textContainer: nil)
+    private let gridButton = RimePointingHandButton(title: "", target: nil, action: nil)
     private let speedCard = TypingTestStatTile(title: "有效速度", symbolName: "speedometer")
     private let keysCard = TypingTestStatTile(title: "击键", symbolName: "keyboard")
     private let backspaceCard = TypingTestStatTile(title: "回退", symbolName: "delete.left")
@@ -50,7 +50,8 @@ final class TypingSpeedSettingsViewController: NSViewController, TypingPracticeT
     private let clearButton = RimePointingHandButton(title: "清空成绩…", target: nil, action: nil)
     private let repairButton = RimePointingHandButton(title: "备份并重建…", target: nil, action: nil)
     private var renderedTargetStates: [TypingTestCharacterState]?
-    private let sidebarButton = RimePointingHandButton(title: "", target: nil, action: nil)
+    private var renderedTypedCorrectness: [Bool]?
+    private static let gridHiddenKey = "TypingTest.gridHidden"
     private let cellsButton = RimePointingHandButton(title: "", target: nil, action: nil)
     private var cellViews: [NSView] = []
     private var resultVisible = false
@@ -103,19 +104,23 @@ final class TypingSpeedSettingsViewController: NSViewController, TypingPracticeT
             document.addSubview(subview)
         }
         NSLayoutConstraint.activate([
-            materials.leadingAnchor.constraint(equalTo: document.leadingAnchor),
-            materials.topAnchor.constraint(equalTo: document.topAnchor),
-            materials.bottomAnchor.constraint(equalTo: document.bottomAnchor),
-            divider.leadingAnchor.constraint(equalTo: materials.trailingAnchor),
+            right.leadingAnchor.constraint(equalTo: document.leadingAnchor),
+            right.topAnchor.constraint(equalTo: document.topAnchor),
+            right.bottomAnchor.constraint(equalTo: document.bottomAnchor),
+            divider.leadingAnchor.constraint(equalTo: right.trailingAnchor),
             divider.topAnchor.constraint(equalTo: document.topAnchor),
             divider.bottomAnchor.constraint(equalTo: document.bottomAnchor),
             divider.widthAnchor.constraint(equalToConstant: 1),
-            right.leadingAnchor.constraint(equalTo: divider.trailingAnchor),
-            right.trailingAnchor.constraint(equalTo: document.trailingAnchor),
-            right.topAnchor.constraint(equalTo: document.topAnchor),
-            right.bottomAnchor.constraint(equalTo: document.bottomAnchor),
+            materials.leadingAnchor.constraint(equalTo: divider.trailingAnchor),
+            materials.trailingAnchor.constraint(equalTo: document.trailingAnchor),
+            materials.topAnchor.constraint(equalTo: document.topAnchor),
+            materials.bottomAnchor.constraint(equalTo: document.bottomAnchor),
         ])
         materials.onSelect = { [weak self] in self?.choose($0) }
+        materials.onCollapsedChange = { [weak self] collapsed in
+            guard let self, self.telemetryEnabled else { return }
+            UserDefaults.standard.set(collapsed, forKey: Self.materialsCollapsedKey)
+        }
         materials.onImport = { [weak self] in self?.importTapped() }
         materials.onDropFiles = { [weak self] in self?.importFiles($0) }
         materials.onRemoveBook = { [weak self] in self?.removeBookTapped($0) }
@@ -174,11 +179,13 @@ final class TypingSpeedSettingsViewController: NSViewController, TypingPracticeT
            let remembered = article(id: id) { selectedArticle = remembered }
         if telemetryEnabled {
             cellsHidden = UserDefaults.standard.bool(forKey: Self.cellsHiddenKey)
+            editor.showsCells = !UserDefaults.standard.bool(forKey: Self.gridHiddenKey)
             setMaterialsCollapsed(UserDefaults.standard.bool(forKey: Self.materialsCollapsedKey), animated: false)
         } else {
             setMaterialsCollapsed(false, animated: false)
         }
         applyCellsVisibility()
+        applyGridButton()
         materials.select(articleID: selectedArticle.id)
         if isHistory { refreshHistory(rebuildContexts: true) } else { resetArticle() }
     }
@@ -212,12 +219,12 @@ final class TypingSpeedSettingsViewController: NSViewController, TypingPracticeT
         repairButton.action = #selector(repairHistoryTapped)
         repairButton.bezelStyle = .rounded
         repairButton.isHidden = true
-        sidebarButton.target = self
-        sidebarButton.action = #selector(toggleMaterials)
-        sidebarButton.bezelStyle = .rounded
-        sidebarButton.controlSize = .small
-        sidebarButton.imagePosition = .imageOnly
-        sidebarButton.refusesFirstResponder = true
+        gridButton.target = self
+        gridButton.action = #selector(toggleGrid)
+        gridButton.bezelStyle = .rounded
+        gridButton.controlSize = .small
+        gridButton.imagePosition = .imageOnly
+        gridButton.refusesFirstResponder = true
         cellsButton.target = self
         cellsButton.action = #selector(toggleCells)
         cellsButton.bezelStyle = .rounded
@@ -246,13 +253,7 @@ final class TypingSpeedSettingsViewController: NSViewController, TypingPracticeT
         progress.maxValue = 1
         progress.style = .bar
         progress.controlSize = .small
-        targetText.isEditable = false
-        targetText.isSelectable = true
-        targetText.drawsBackground = false
-        targetText.textContainerInset = NSSize(width: 12, height: 8)
-        targetText.setAccessibilityLabel("跟打原文，绿色为正确，红色为待改，灰色为未输入")
         editor.isEditable = false
-        editor.textContainerInset = NSSize(width: 12, height: 8)
         editor.onPhysicalKey = { [weak self] event in
             guard let self else { return }
             TypingPracticeTelemetry.shared.noteLocalKey(event, textView: self.editor)
@@ -286,7 +287,7 @@ final class TypingSpeedSettingsViewController: NSViewController, TypingPracticeT
     private func buildPractice(in content: NSStackView) {
         let random = iconButton("shuffle", help: "在当前书籍或内置文章里随机换一段", action: #selector(randomTapped))
         let titles = TypingTestTitleBlock(title: articleTitle, detail: articleDetail)
-        add(headerRow(titles, leading: [sidebarButton], trailing: [random, startButton, finishButton, cellsButton]), to: content)
+        add(headerRow(titles, trailing: [random, startButton, finishButton, cellsButton]), to: content)
         let strip = metricRow([speedCard, keysCard, backspaceCard, accuracyCard])
         add(strip, to: content)
         resultStack.isHidden = true
@@ -294,8 +295,8 @@ final class TypingSpeedSettingsViewController: NSViewController, TypingPracticeT
         progress.translatesAutoresizingMaskIntoConstraints = false
         progress.widthAnchor.constraint(equalToConstant: 110).isActive = true
         add(row([statusLabel, flexible(), progress, progressLabel, timeLabel]), to: content)
-        // One card, two lines: the text to copy above, what is typed below.
-        add(pairedPanel(target: targetText, input: editor), to: content, flexible: true)
+        // One card, double track: each source row over the row being typed.
+        add(trackPanel(), to: content, flexible: true)
         speedChart.toolTip =
             "速度轨迹 · 计时含思考与纠错 · 标点逐字对照 · 仅保存成绩，不保存输入正文。"
             + "中文有效速度 = 正确字符 ÷ 总分钟；英文 WPM = 正确字符 ÷ 5 ÷ 总分钟。"
@@ -307,7 +308,7 @@ final class TypingSpeedSettingsViewController: NSViewController, TypingPracticeT
     }
     private func buildHistory(in content: NSStackView) {
         let titles = TypingTestTitleBlock(title: articleTitle, detail: articleDetail)
-        add(headerRow(titles, leading: [sidebarButton], trailing: [repairButton, clearButton, cellsButton]), to: content)
+        add(headerRow(titles, trailing: [repairButton, clearButton, cellsButton]), to: content)
         add(contextPicker, to: content)
         let strip = metricRow([speedCard, keysCard, backspaceCard, accuracyCard])
         add(strip, to: content)
@@ -410,7 +411,7 @@ final class TypingSpeedSettingsViewController: NSViewController, TypingPracticeT
         for (url, result) in zip(urls, parsed) {
             do {
                 switch try library.add(result.get()) {
-                case let .added(book): added.append(book)
+                case let .added(book), let .replaced(book): added.append(book)
                 case let .alreadyPresent(book): existing = book
                 }
             } catch { problems.append("\(url.lastPathComponent)：\(error.localizedDescription)") }
@@ -460,6 +461,7 @@ final class TypingSpeedSettingsViewController: NSViewController, TypingPracticeT
         progressLabel.stringValue = "0%"
         updateMetricCards(nil)
         renderedTargetStates = nil
+        renderedTypedCorrectness = nil
         renderTarget(states: [])
         refreshStorageWarning()
     }
@@ -543,7 +545,7 @@ final class TypingSpeedSettingsViewController: NSViewController, TypingPracticeT
         timeLabel.stringValue = Self.duration(metrics.elapsedSeconds)
         progress.doubleValue = metrics.progress
         progressLabel.stringValue = String(format: "%.0f%%", metrics.progress * 100)
-        renderTarget(states: snapshot.targetStates)
+        renderTarget(states: snapshot.targetStates, typed: snapshot.typedCorrectness)
         speedChart.samples = metrics.speedSamples.enumerated().map { index, sample in
             MetricsChartSample(id: String(index), label: Self.duration(sample.elapsedSeconds),
                                value: selectedArticle.language == .english ? sample.effectiveCPM / 5 : sample.effectiveCPM,
@@ -651,47 +653,15 @@ final class TypingSpeedSettingsViewController: NSViewController, TypingPracticeT
         applyCellsVisibility()
     }
 
-    @objc private func toggleMaterials() {
-        setMaterialsCollapsed(!materials.isCollapsed, animated: true)
-        if telemetryEnabled { UserDefaults.standard.set(materials.isCollapsed, forKey: Self.materialsCollapsedKey) }
-    }
-
     private func setMaterialsCollapsed(_ collapsed: Bool, animated: Bool) {
         materials.setCollapsed(collapsed, animated: animated)
-        sidebarButton.image = NSImage(systemSymbolName: collapsed ? "sidebar.left" : "sidebar.leading",
-                                      accessibilityDescription: "素材栏")
-        sidebarButton.toolTip = collapsed ? "展开素材栏" : "收起素材栏"
-        sidebarButton.setAccessibilityLabel(sidebarButton.toolTip)
     }
 
-    private func renderTarget(states: [TypingTestCharacterState]) {
-        guard renderedTargetStates != states else { return }
+    private func renderTarget(states: [TypingTestCharacterState], typed: [Bool] = []) {
+        guard renderedTargetStates != states || renderedTypedCorrectness != typed else { return }
         renderedTargetStates = states
-        let attributed = NSMutableAttributedString(string: "")
-        let paragraph = NSMutableParagraphStyle()
-        paragraph.lineSpacing = 6
-        paragraph.paragraphSpacing = 10
-        for (index, character) in selectedArticle.text.enumerated() {
-            let state = index < states.count ? states[index] : .pending
-            var color = RimeUI.textMuted
-            var background = NSColor.clear
-            switch state {
-            case .correct: color = RimeUI.accentTextColor
-            case .incorrect, .omitted:
-                color = RimeUI.dangerTextColor
-                background = RimeUI.dangerFillColor.withAlphaComponent(0.13)
-            case .pending: break
-            }
-            attributed.append(NSAttributedString(string: String(character), attributes: [
-                .font: NSFont.systemFont(ofSize: 18), .foregroundColor: color,
-                .backgroundColor: background, .paragraphStyle: paragraph,
-            ]))
-        }
-        targetText.textStorage?.setAttributedString(attributed)
-        if let index = states.firstIndex(of: .pending), index > 0 {
-            let prefix = String(selectedArticle.text.prefix(index))
-            targetText.scrollRangeToVisible(NSRange(location: (prefix as NSString).length, length: 0))
-        }
+        renderedTypedCorrectness = typed
+        editor.setSource(selectedArticle.text, states: states, typedCorrectness: typed)
     }
 
     private func refreshHistory(rebuildContexts: Bool) {
@@ -811,70 +781,55 @@ final class TypingSpeedSettingsViewController: NSViewController, TypingPracticeT
         }
     }
 
-    private func textScroll(_ textView: NSTextView) -> NSScrollView {
+    /// One card holding the double track: source row above, typing row below.
+    private func trackPanel() -> NSView {
+        let title = label("跟打", size: 11, weight: .semibold)
+        let hint = label("上行原文 · 下行输入 · 首键计时 · 组字不判错", size: 10.5)
+        hint.textColor = RimeUI.textMuted
+        hint.setContentCompressionResistancePriority(.init(100), for: .horizontal)
         let scroll = NSScrollView()
         scroll.drawsBackground = false
         scroll.hasVerticalScroller = true
         scroll.autohidesScrollers = true
         scroll.borderType = .noBorder
-        textView.isVerticallyResizable = true
-        textView.isHorizontallyResizable = false
-        textView.autoresizingMask = [.width]
-        textView.textContainer?.widthTracksTextView = true
-        textView.textContainer?.containerSize = NSSize(width: 0, height: CGFloat.greatestFiniteMagnitude)
-        scroll.documentView = textView
+        scroll.documentView = editor
         scroll.translatesAutoresizingMaskIntoConstraints = false
-        return scroll
-    }
-
-    /// Source text on the first line, typed text on the second, in one card.
-    private func pairedPanel(target: NSTextView, input: NSTextView) -> NSView {
-        func caption(_ title: String, _ hint: String) -> (NSTextField, NSTextField) {
-            let titleLabel = label(title, size: 11, weight: .semibold)
-            let hintLabel = label(hint, size: 10.5)
-            hintLabel.textColor = RimeUI.textMuted
-            hintLabel.setContentCompressionResistancePriority(.init(100), for: .horizontal)
-            return (titleLabel, hintLabel)
-        }
-        let (targetTitle, targetHint) = caption("原文", "正确 / 待改 / 未输入")
-        let (inputTitle, inputHint) = caption("输入", "首键计时 · 组字不判错")
-        let targetScroll = textScroll(target), inputScroll = textScroll(input)
-        let divider = TypingTestDividerView()
+        gridButton.translatesAutoresizingMaskIntoConstraints = false
         let card = TypingTestSurfaceView()
-        for subview in [targetTitle, targetHint, targetScroll, divider, inputTitle, inputHint, inputScroll] {
+        for subview in [title, hint, gridButton, scroll] {
             subview.translatesAutoresizingMaskIntoConstraints = false
             card.addSubview(subview)
         }
-        let share = targetScroll.heightAnchor.constraint(equalTo: inputScroll.heightAnchor, multiplier: 1.4)
-        share.priority = .init(740)
         NSLayoutConstraint.activate([
-            targetTitle.leadingAnchor.constraint(equalTo: card.leadingAnchor, constant: 14),
-            targetTitle.topAnchor.constraint(equalTo: card.topAnchor, constant: 9),
-            targetHint.leadingAnchor.constraint(greaterThanOrEqualTo: targetTitle.trailingAnchor, constant: 10),
-            targetHint.trailingAnchor.constraint(equalTo: card.trailingAnchor, constant: -14),
-            targetHint.firstBaselineAnchor.constraint(equalTo: targetTitle.firstBaselineAnchor),
-            targetScroll.leadingAnchor.constraint(equalTo: card.leadingAnchor, constant: 2),
-            targetScroll.trailingAnchor.constraint(equalTo: card.trailingAnchor, constant: -2),
-            targetScroll.topAnchor.constraint(equalTo: targetTitle.bottomAnchor, constant: 3),
-            targetScroll.heightAnchor.constraint(greaterThanOrEqualToConstant: 56),
-            divider.leadingAnchor.constraint(equalTo: card.leadingAnchor, constant: 14),
-            divider.trailingAnchor.constraint(equalTo: card.trailingAnchor, constant: -14),
-            divider.topAnchor.constraint(equalTo: targetScroll.bottomAnchor, constant: 4),
-            divider.heightAnchor.constraint(equalToConstant: 1),
-            inputTitle.leadingAnchor.constraint(equalTo: card.leadingAnchor, constant: 14),
-            inputTitle.topAnchor.constraint(equalTo: divider.bottomAnchor, constant: 8),
-            inputHint.leadingAnchor.constraint(greaterThanOrEqualTo: inputTitle.trailingAnchor, constant: 10),
-            inputHint.trailingAnchor.constraint(equalTo: card.trailingAnchor, constant: -14),
-            inputHint.firstBaselineAnchor.constraint(equalTo: inputTitle.firstBaselineAnchor),
-            inputScroll.leadingAnchor.constraint(equalTo: card.leadingAnchor, constant: 2),
-            inputScroll.trailingAnchor.constraint(equalTo: card.trailingAnchor, constant: -2),
-            inputScroll.topAnchor.constraint(equalTo: inputTitle.bottomAnchor, constant: 3),
-            inputScroll.bottomAnchor.constraint(equalTo: card.bottomAnchor, constant: -6),
-            inputScroll.heightAnchor.constraint(greaterThanOrEqualToConstant: 56),
-            share,
+            title.leadingAnchor.constraint(equalTo: card.leadingAnchor, constant: 14),
+            title.centerYAnchor.constraint(equalTo: gridButton.centerYAnchor),
+            gridButton.topAnchor.constraint(equalTo: card.topAnchor, constant: 7),
+            gridButton.trailingAnchor.constraint(equalTo: card.trailingAnchor, constant: -10),
+            hint.leadingAnchor.constraint(greaterThanOrEqualTo: title.trailingAnchor, constant: 10),
+            hint.trailingAnchor.constraint(equalTo: gridButton.leadingAnchor, constant: -10),
+            hint.centerYAnchor.constraint(equalTo: gridButton.centerYAnchor),
+            scroll.leadingAnchor.constraint(equalTo: card.leadingAnchor, constant: 2),
+            scroll.trailingAnchor.constraint(equalTo: card.trailingAnchor, constant: -2),
+            scroll.topAnchor.constraint(equalTo: gridButton.bottomAnchor, constant: 5),
+            scroll.bottomAnchor.constraint(equalTo: card.bottomAnchor, constant: -6),
+            scroll.heightAnchor.constraint(greaterThanOrEqualToConstant: 150),
         ])
         return card
     }
+
+    @objc private func toggleGrid() {
+        editor.showsCells.toggle()
+        if telemetryEnabled { UserDefaults.standard.set(!editor.showsCells, forKey: Self.gridHiddenKey) }
+        applyGridButton()
+    }
+
+    private func applyGridButton() {
+        gridButton.image = NSImage(systemSymbolName: editor.showsCells ? "squareshape.split.3x3" : "square.dashed",
+                                   accessibilityDescription: "格子")
+        gridButton.toolTip = editor.showsCells ? "隐藏格子" : "显示格子"
+        gridButton.setAccessibilityLabel(gridButton.toolTip)
+    }
+
     private func roundedBox(_ content: NSView) -> NSView {
         let box = TypingTestSurfaceView()
         box.translatesAutoresizingMaskIntoConstraints = false
@@ -995,8 +950,9 @@ final class TypingSpeedSettingsViewController: NSViewController, TypingPracticeT
     func smokeToggleCells() { toggleCells() }
     func smokeToggleMaterials() { setMaterialsCollapsed(!materials.isCollapsed, animated: false) }
     var smokeCellsHidden: Bool { cellsHidden }
-    var smokeTargetScroll: NSScrollView? { targetText.enclosingScrollView }
-    var smokeTargetString: String { targetText.string }
+    var smokeTargetScroll: NSScrollView? { editor.enclosingScrollView }
+    var smokeTrack: TypingTestTrackTextView { editor }
+    var smokeTargetString: String { String(editor.sourceCharacters) }
     var smokeEditor: TypingTestTextView { editor }
     var smokeChart: MetricsLineChartView { speedChart }
     var smokeIsArmed: Bool { isArmed }

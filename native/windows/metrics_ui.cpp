@@ -291,8 +291,8 @@ struct ExtensionPages::Impl {
     auto dc = GetDC(editor); auto old = SelectObject(dc, editor_font);
     LONG position = 0; std::size_t line_index = 0;
     for (const auto& c : mat::Characters(Utf8(formatted))) {
-      const auto text = Wide(c); CHARRANGE range{position, position + static_cast<LONG>(text.size())};
-      SendMessageW(editor, EM_EXSETSEL, 0, reinterpret_cast<LPARAM>(&range));
+      const auto text = Wide(c); CHARRANGE span{position, position + static_cast<LONG>(text.size())};
+      SendMessageW(editor, EM_EXSETSEL, 0, reinterpret_cast<LPARAM>(&span));
       paragraph.dxStartIndent = indents[std::min(line_index, indents.size() - 1)] * 28 * 15;
       paragraph.dxOffset = 0;
       SendMessageW(editor, EM_SETPARAFORMAT, 0, reinterpret_cast<LPARAM>(&paragraph));
@@ -303,12 +303,16 @@ struct ExtensionPages::Impl {
         format.sSpacing = static_cast<SHORT>(std::clamp(MulDiv(Px(28) - extent.cx, 1440, static_cast<int>(dpi)), -32000, 32000));
         SendMessageW(editor, EM_SETCHARFORMAT, SCF_SELECTION, reinterpret_cast<LPARAM>(&format));
       }
-      position = range.cpMax;
+      position = span.cpMax;
     }
     SelectObject(dc, old); ReleaseDC(editor, dc);
     CHARRANGE restored{physical(begin), physical(end)};
     SendMessageW(editor, EM_EXSETSEL, 0, reinterpret_cast<LPARAM>(&restored));
-    SendMessageW(editor, EM_SETPARAFORMAT, 0, reinterpret_cast<LPARAM>(&paragraph));
+    if (restored.cpMin == restored.cpMax) {
+      const auto caret_row = static_cast<std::size_t>(std::count(formatted.begin(), formatted.begin() + restored.cpMin, L'\r'));
+      paragraph.dxStartIndent = indents[std::min(caret_row, indents.size() - 1)] * 28 * 15;
+      SendMessageW(editor, EM_SETPARAFORMAT, 0, reinterpret_cast<LPARAM>(&paragraph));
+    }
     SendMessageW(editor, EM_SETSCROLLPOS, 0, reinterpret_cast<LPARAM>(&scroll_pos));
     SendMessageW(editor, WM_SETREDRAW, TRUE, 0);
     suppress = false; InvalidateRect(editor, nullptr, FALSE);
@@ -321,13 +325,13 @@ struct ExtensionPages::Impl {
     for (std::size_t row = 0; row < track_rows.size(); ++row) {
       const auto y = Px(10 + static_cast<int>(row) * 76) - scroll_pos.y;
       if (y + Px(28) < 0 || y > client.bottom) continue;
-      const auto& source = track_rows[row];
-      const auto chars = rimes::practice::materials::Characters(source.text);
+      const auto& source_row = track_rows[row];
+      const auto chars = rimes::practice::materials::Characters(source_row.text);
       for (std::size_t i = 0; i < chars.size(); ++i) {
-        const auto index = source.start + i;
+        const auto index = source_row.start + i;
         const int state = last_states.is_array() && index < last_states.size() ? last_states[index].get<int>() : 0;
         SetTextColor(dc, ui::ToColorRef(state == 1 ? Palette().accent_text : state >= 2 ? Palette().danger_text : Palette().text_secondary));
-        RECT cell{Px(12 + (source.indent + static_cast<int>(i)) * 28), y, Px(12 + (source.indent + static_cast<int>(i) + 1) * 28), y + Px(28)};
+        RECT cell{Px(12 + (source_row.indent + static_cast<int>(i)) * 28), y, Px(12 + (source_row.indent + static_cast<int>(i) + 1) * 28), y + Px(28)};
         const auto text = Wide(chars[i]); DrawTextW(dc, text.c_str(), static_cast<int>(text.size()), &cell, DT_CENTER | DT_SINGLELINE | DT_NOPREFIX);
       }
     }
@@ -358,6 +362,11 @@ struct ExtensionPages::Impl {
     if (!material_task || !material_task->done.load(std::memory_order_acquire) || service->Armed()) return;
     auto job = std::exchange(material_task, {});
     if (!job->error.empty()) { status = L"文库：" + job->error; InvalidateRect(hwnd, nullptr, FALSE); return; }
+    const bool changed = articles.size() != job->articles.size() || books != job->books ||
+        !std::equal(articles.begin(), articles.end(), job->articles.begin(), job->articles.end(), [](const auto& a, const auto& b) {
+          return a.id == b.id && a.version == b.version && a.text == b.text && a.display_text == b.display_text;
+        });
+    if (!changed) return;
     const auto selected = articles.at(article).id;
     articles = std::move(job->articles); books = std::move(job->books);
     article = 0;
@@ -500,7 +509,7 @@ struct ExtensionPages::Impl {
     surface = CreateSolidBrush(ui::ToColorRef(Palette().surface));
     if (editor_font) DeleteObject(editor_font);
     editor_font =
-        CreateFontW(-Px(18), 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE,
+        CreateFontW(-Px(22), 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE,
                     DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
                     CLEARTYPE_QUALITY, DEFAULT_PITCH, L"Segoe UI");
     for (auto [id, h] : controls)

@@ -1011,7 +1011,7 @@ final class TypingSpeedSettingsViewController: NSViewController, TypingPracticeT
     func smokeFinishByButton() { finishButton.performClick(nil) }
 }
 
-private final class TypingTestDocumentView: NSView {
+private final class TypingTestDocumentView: NSView, SettingsSelfScrollingPage {
     var onDetach: (() -> Void)?
     private var wasAttached = false
     override var isFlipped: Bool { true }

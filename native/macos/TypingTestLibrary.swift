@@ -38,7 +38,8 @@ struct TypingTestBook: Codable, Equatable, Identifiable {
         return TypingTestArticle(
             id: "epub.\(id).\(before + passage + 1)", version: 1,
             language: TypingTestPassageSplitter.language(of: text),
-            title: "\(title) · \(chapters[chapter].title) · \(passage + 1)/\(count)",
+            title: count > 1 ? "\(title) · \(chapters[chapter].title) · \(passage + 1)/\(count)"
+                             : "\(title) · \(chapters[chapter].title)",
             theme: author.isEmpty ? title : author, difficulty: "导入", text: text)
     }
 
@@ -143,13 +144,17 @@ enum TypingTestPassageSplitter {
         return pieces
     }
 
-    /// Packs whole sentences into passages near `target` characters and never
-    /// beyond `limit`, which stays far below `TypingTestSession.maximumCharacters`.
+    /// One chapter is one practice piece. A chapter longer than `pieceLimit`
+    /// (kept below the session's 2,048-character cap) is cut at sentence ends
+    /// into the fewest, evenly sized parts.
+    static let pieceLimit = 2_000
+
     static func passages(from paragraphs: [String]) -> [String] {
         let wideText = language(of: paragraphs.joined()) == .chinese
-        let target = wideText ? 380 : 560
-        let limit = wideText ? 640 : 900
         let separator = wideText ? "" : " "
+        let total = paragraphs.reduce(0) { $0 + $1.count + separator.count }
+        let parts = max(1, Int((Double(total) / Double(pieceLimit)).rounded(.up)))
+        let target = Int((Double(total) / Double(parts)).rounded(.up))
         var result: [String] = []
         var current = ""
         func flush() {
@@ -159,8 +164,8 @@ enum TypingTestPassageSplitter {
         }
         for paragraph in paragraphs {
             for sentence in sentences(of: paragraph) {
-                for piece in sentence.count > limit ? hardCut(sentence, limit: limit) : [sentence] {
-                    if current.count >= target || current.count + piece.count > limit { flush() }
+                for piece in sentence.count > pieceLimit ? hardCut(sentence, limit: pieceLimit) : [sentence] {
+                    if current.count >= target || current.count + piece.count > pieceLimit { flush() }
                     current += piece
                 }
             }
@@ -168,7 +173,7 @@ enum TypingTestPassageSplitter {
         }
         flush()
         if result.count > 1, let last = result.last, last.count < 60,
-           let previous = result.dropLast().last, previous.count + last.count + separator.count <= limit {
+           let previous = result.dropLast().last, previous.count + last.count + separator.count <= pieceLimit {
             result.removeLast(2)
             result.append(previous + separator + last)
         }
@@ -322,6 +327,11 @@ enum TypingTestEPUBImporter {
             chapters.append(.init(title: title, passages: passages))
         }
         guard !chapters.isEmpty else { throw TypingTestEPUBError.noText }
+        // Number the chapters so every piece has a stable, sortable code: 001, 002, …
+        let width = max(2, String(chapters.count).count)
+        for index in chapters.indices {
+            chapters[index].title = String(format: "%0\(width)d", index + 1) + " · " + chapters[index].title
+        }
         let digest = SHA256.hash(data: data).prefix(8).map { String(format: "%02x", $0) }.joined()
         let title = TypingTestPassageSplitter.tidy(package.title)
         return TypingTestBook(id: digest, title: title.isEmpty ? "未命名图书" : String(title.prefix(80)),
@@ -645,7 +655,7 @@ final class TypingTestLibraryStore {
             && !book.chapters.isEmpty && book.passageCount <= TypingTestEPUBImporter.maximumPassages
             && book.chapters.allSatisfy { chapter in
                 !chapter.passages.isEmpty && chapter.passages.allSatisfy {
-                    !$0.isEmpty && $0.count <= 1_200 && $0.utf8.count <= TypingTestSession.maximumTextBytes
+                    !$0.isEmpty && $0.count <= TypingTestPassageSplitter.pieceLimit && $0.utf8.count <= TypingTestSession.maximumTextBytes
                 }
             }
     }

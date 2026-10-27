@@ -4,7 +4,7 @@ import AppKit
 /// imported books (book → chapter → passage). Only articles and passages are
 /// selectable; books and chapters expand and collapse.
 final class TypingTestMaterialColumn: NSView, NSOutlineViewDataSource, NSOutlineViewDelegate {
-    static let preferredWidth: CGFloat = 188
+    static let preferredWidth: CGFloat = 204
 
     private final class Node: NSObject {
         enum Kind {
@@ -12,7 +12,7 @@ final class TypingTestMaterialColumn: NSView, NSOutlineViewDataSource, NSOutline
             case article(TypingTestArticle)
             case book(TypingTestBook)
             case chapter(TypingTestBook, Int)
-            case passage(TypingTestArticle, bookID: String, number: Int)
+            case passage(TypingTestArticle, bookID: String, label: String, indent: CGFloat)
         }
         let kind: Kind
         let children: () -> [Node]
@@ -21,14 +21,14 @@ final class TypingTestMaterialColumn: NSView, NSOutlineViewDataSource, NSOutline
         init(_ kind: Kind, children: @escaping () -> [Node] = { [] }) { self.kind = kind; self.children = children }
         var article: TypingTestArticle? {
             switch kind {
-            case let .article(article), let .passage(article, _, _): return article
+            case let .article(article), let .passage(article, _, _, _): return article
             default: return nil
             }
         }
         var bookID: String? {
             switch kind {
             case let .book(book), let .chapter(book, _): return book.id
-            case let .passage(_, bookID, _): return bookID
+            case let .passage(_, bookID, _, _): return bookID
             default: return nil
             }
         }
@@ -94,7 +94,7 @@ final class TypingTestMaterialColumn: NSView, NSOutlineViewDataSource, NSOutline
         outline.backgroundColor = .clear
         outline.rowSizeStyle = .custom
         outline.rowHeight = 24
-        outline.indentationPerLevel = 12
+        outline.indentationPerLevel = 0   // cards fill the row; nested rows indent themselves
         outline.intercellSpacing = NSSize(width: 0, height: 1)
         outline.selectionHighlightStyle = .regular
         outline.floatsGroupRows = false
@@ -187,10 +187,15 @@ final class TypingTestMaterialColumn: NSView, NSOutlineViewDataSource, NSOutline
                 library.books.map { book in
                     Node(.book(book)) {
                         book.chapters.indices.map { index in
-                            Node(.chapter(book, index)) {
+                            let parts = book.chapters[index].passages.count
+                            // A chapter that is one piece is selectable itself; several parts expand.
+                            if parts == 1, let article = book.article(chapter: index, passage: 0) {
+                                return Node(.passage(article, bookID: book.id, label: book.chapters[index].title, indent: 24))
+                            }
+                            return Node(.chapter(book, index)) {
                                 book.chapters[index].passages.indices.compactMap { passage in
                                     book.article(chapter: index, passage: passage).map {
-                                        Node(.passage($0, bookID: book.id, number: passage + 1))
+                                        Node(.passage($0, bookID: book.id, label: "第 \(passage + 1) / \(parts) 部分", indent: 36))
                                     }
                                 }
                             }
@@ -284,7 +289,8 @@ final class TypingTestMaterialColumn: NSView, NSOutlineViewDataSource, NSOutline
         guard let node = item as? Node else { return 24 }
         switch node.kind {
         case .section: return 26
-        case .book: return 38
+        case .article: return 58
+        case .book: return 54
         default: return 24
         }
     }
@@ -305,6 +311,19 @@ final class TypingTestMaterialColumn: NSView, NSOutlineViewDataSource, NSOutline
         onSelect?(article)
     }
 
+    /// Built-in articles and book headers are cards; chapters and passages stay compact rows.
+    func outlineView(_ outlineView: NSOutlineView, rowViewForItem item: Any) -> NSTableRowView? {
+        guard let node = item as? Node else { return nil }
+        switch node.kind {
+        case .article, .book:
+            let row = MaterialRowView()
+            row.isCard = true
+            row.isSelectableCard = node.article != nil
+            return row
+        default: return nil
+        }
+    }
+
     func outlineView(_ outlineView: NSOutlineView, viewFor tableColumn: NSTableColumn?, item: Any) -> NSView? {
         guard let node = item as? Node else { return nil }
         let identifier = NSUserInterfaceItemIdentifier("material.cell")
@@ -312,15 +331,20 @@ final class TypingTestMaterialColumn: NSView, NSOutlineViewDataSource, NSOutline
             let made = MaterialCell(); made.identifier = identifier; return made
         }()
         switch node.kind {
-        case let .section(title): cell.configure(title: title, detail: nil, style: .section)
-        case let .article(article): cell.configure(title: article.title, detail: article.displayLength, style: .row)
+        case let .section(title): cell.configure(title: title, detail: nil, leading: 8, style: .section)
+        case let .article(article):
+            cell.configure(title: article.title,
+                           detail: "\(article.theme) · \(article.difficulty) · \(article.displayLength)",
+                           leading: 14, style: .card)
         case let .book(book):
-            cell.configure(title: book.title, detail: "\(book.chapters.count) 章 · \(book.passageCount) 段 · \(book.author.isEmpty ? "佚名" : book.author)",
-                           style: .book)
+            cell.configure(title: book.title,
+                           detail: "\(book.chapters.count) 章 · \(book.passageCount) 段 · \(book.author.isEmpty ? "佚名" : book.author)",
+                           leading: 30, style: .card)
         case let .chapter(book, index):
-            cell.configure(title: book.chapters[index].title, detail: "\(book.chapters[index].passages.count) 段", style: .row)
-        case let .passage(article, _, number):
-            cell.configure(title: "第 \(number) 段", detail: article.displayLength, style: .row)
+            cell.configure(title: book.chapters[index].title, detail: "\(book.chapters[index].passages.count) 部分",
+                           leading: 24, style: .row)
+        case let .passage(article, _, label, indent):
+            cell.configure(title: label, detail: article.displayLength, leading: indent, style: .row)
         }
         return cell
     }
@@ -350,26 +374,41 @@ final class TypingTestMaterialColumn: NSView, NSOutlineViewDataSource, NSOutline
 }
 
 private final class MaterialCell: NSTableCellView {
-    enum Style { case section, row, book }
+    enum Style { case section, row, card }
     private let title = NSTextField(labelWithString: "")
     private let detail = NSTextField(labelWithString: "")
+    private let meta = NSTextField(labelWithString: "")
+    private var cardOnly: [NSLayoutConstraint] = []
     private var detailBelow: [NSLayoutConstraint] = []
     private var detailBeside: [NSLayoutConstraint] = []
     private var sectionOnly: [NSLayoutConstraint] = []
+    private var rowLeading: NSLayoutConstraint!
+    private var cardLeading: NSLayoutConstraint!
 
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
-        for field in [title, detail] {
+        for field in [title, detail, meta] {
             field.lineBreakMode = .byTruncatingTail
             field.translatesAutoresizingMaskIntoConstraints = false
             addSubview(field)
         }
+        meta.setContentCompressionResistancePriority(.required, for: .horizontal)
+        meta.setContentHuggingPriority(.required, for: .horizontal)
+        cardLeading = title.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 14)
+        cardOnly = [
+            cardLeading,
+            title.topAnchor.constraint(equalTo: topAnchor, constant: 11),
+            title.trailingAnchor.constraint(lessThanOrEqualTo: trailingAnchor, constant: -12),
+            detail.leadingAnchor.constraint(equalTo: title.leadingAnchor),
+            detail.topAnchor.constraint(equalTo: title.bottomAnchor, constant: 3),
+            detail.trailingAnchor.constraint(lessThanOrEqualTo: trailingAnchor, constant: -12),
+            meta.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -14),
+            meta.centerYAnchor.constraint(equalTo: title.centerYAnchor),
+        ]
         title.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         detail.setContentCompressionResistancePriority(.defaultHigh, for: .horizontal)
         detail.setContentHuggingPriority(.required, for: .horizontal)
-        NSLayoutConstraint.activate([
-            title.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 2),
-        ])
+        rowLeading = title.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 2)
         detailBeside = [
             title.centerYAnchor.constraint(equalTo: centerYAnchor),
             detail.centerYAnchor.constraint(equalTo: centerYAnchor),
@@ -388,30 +427,69 @@ private final class MaterialCell: NSTableCellView {
     }
     required init?(coder: NSCoder) { nil }
 
-    func configure(title text: String, detail detailText: String?, style: Style) {
+    func configure(title text: String, detail detailText: String?, meta metaText: String? = nil, leading: CGFloat = 2, style: Style) {
+        rowLeading.constant = leading
+        cardLeading.constant = leading
         title.stringValue = text
         detail.stringValue = detailText ?? ""
         detail.isHidden = detailText == nil
+        meta.stringValue = metaText ?? ""
+        meta.isHidden = metaText == nil
         toolTip = [text, detailText].compactMap { $0 }.joined(separator: " · ")
-        NSLayoutConstraint.deactivate(detailBelow + detailBeside + sectionOnly)
+        var inactive: [NSLayoutConstraint] = detailBelow
+        inactive.append(contentsOf: detailBeside)
+        inactive.append(contentsOf: sectionOnly)
+        inactive.append(contentsOf: cardOnly)
+        inactive.append(rowLeading)
+        NSLayoutConstraint.deactivate(inactive)
         switch style {
         case .section:
             title.font = .systemFont(ofSize: 10, weight: .semibold)
             title.textColor = RimeUI.textMuted
             title.stringValue = text.uppercased()
             NSLayoutConstraint.activate(sectionOnly)
+            rowLeading.isActive = true
         case .row:
             title.font = .systemFont(ofSize: 12)
             title.textColor = RimeUI.textPrimary
             detail.font = .monospacedDigitSystemFont(ofSize: 10.5, weight: .regular)
             detail.textColor = RimeUI.textMuted
             NSLayoutConstraint.activate(detailBeside)
-        case .book:
-            title.font = .systemFont(ofSize: 12, weight: .semibold)
+            rowLeading.isActive = true
+        case .card:
+            title.font = .systemFont(ofSize: 12.5, weight: .semibold)
             title.textColor = RimeUI.textPrimary
             detail.font = .systemFont(ofSize: 10.5)
             detail.textColor = RimeUI.textSecondary
-            NSLayoutConstraint.activate(detailBelow)
+            meta.font = .monospacedDigitSystemFont(ofSize: 10.5, weight: .medium)
+            meta.textColor = RimeUI.accentTextColor
+            NSLayoutConstraint.activate(cardOnly)
         }
+    }
+}
+
+/// A rounded card behind built-in articles and book headers; the selected card
+/// gets an accent border instead of the stock list highlight.
+private final class MaterialRowView: NSTableRowView {
+    var isCard = false
+    var isSelectableCard = false
+    override var isSelected: Bool { didSet { needsDisplay = true } }
+
+    override func drawBackground(in dirtyRect: NSRect) {
+        guard isCard else { super.drawBackground(in: dirtyRect); return }
+        let selected = isSelected && isSelectableCard
+        let path = NSBezierPath(roundedRect: bounds.insetBy(dx: 4, dy: 2.5), xRadius: 10, yRadius: 10)
+        (selected ? RimeUI.accentGreen.withAlphaComponent(0.12) : RimeUI.surface).setFill()
+        path.fill()
+        (selected ? RimeUI.accentGreen : RimeUI.border).setStroke()
+        path.lineWidth = selected ? 1.5 : 1
+        path.stroke()
+    }
+    override func drawSelection(in dirtyRect: NSRect) {
+        if !isCard { super.drawSelection(in: dirtyRect) }
+    }
+    override func viewDidChangeEffectiveAppearance() {
+        super.viewDidChangeEffectiveAppearance()
+        needsDisplay = true
     }
 }

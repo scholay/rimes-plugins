@@ -50,6 +50,13 @@ final class TypingSpeedSettingsViewController: NSViewController, TypingPracticeT
     private let clearButton = RimePointingHandButton(title: "清空成绩…", target: nil, action: nil)
     private let repairButton = RimePointingHandButton(title: "备份并重建…", target: nil, action: nil)
     private var renderedTargetStates: [TypingTestCharacterState]?
+    private let sidebarButton = RimePointingHandButton(title: "", target: nil, action: nil)
+    private let cellsButton = RimePointingHandButton(title: "", target: nil, action: nil)
+    private var cellViews: [NSView] = []
+    private var resultVisible = false
+    private var cellsHidden = false
+    private static let materialsCollapsedKey = "TypingTest.materialsCollapsed"
+    private static let cellsHiddenKey = "TypingTest.cellsHidden"
 
     init(subpageID: String, historyStore: TypingTestHistoryStore = .shared,
          library: TypingTestLibraryStore = .shared,
@@ -165,6 +172,13 @@ final class TypingSpeedSettingsViewController: NSViewController, TypingPracticeT
         }
         if telemetryEnabled, let id = UserDefaults.standard.string(forKey: Self.lastArticleKey),
            let remembered = article(id: id) { selectedArticle = remembered }
+        if telemetryEnabled {
+            cellsHidden = UserDefaults.standard.bool(forKey: Self.cellsHiddenKey)
+            setMaterialsCollapsed(UserDefaults.standard.bool(forKey: Self.materialsCollapsedKey), animated: false)
+        } else {
+            setMaterialsCollapsed(false, animated: false)
+        }
+        applyCellsVisibility()
         materials.select(articleID: selectedArticle.id)
         if isHistory { refreshHistory(rebuildContexts: true) } else { resetArticle() }
     }
@@ -198,6 +212,18 @@ final class TypingSpeedSettingsViewController: NSViewController, TypingPracticeT
         repairButton.action = #selector(repairHistoryTapped)
         repairButton.bezelStyle = .rounded
         repairButton.isHidden = true
+        sidebarButton.target = self
+        sidebarButton.action = #selector(toggleMaterials)
+        sidebarButton.bezelStyle = .rounded
+        sidebarButton.controlSize = .small
+        sidebarButton.imagePosition = .imageOnly
+        sidebarButton.refusesFirstResponder = true
+        cellsButton.target = self
+        cellsButton.action = #selector(toggleCells)
+        cellsButton.bezelStyle = .rounded
+        cellsButton.controlSize = .small
+        cellsButton.imagePosition = .imageOnly
+        cellsButton.refusesFirstResponder = true
         articleTitle.font = .systemFont(ofSize: 15, weight: .semibold)
         articleTitle.textColor = RimeUI.textPrimary
         articleTitle.lineBreakMode = .byTruncatingTail
@@ -260,21 +286,16 @@ final class TypingSpeedSettingsViewController: NSViewController, TypingPracticeT
     private func buildPractice(in content: NSStackView) {
         let random = iconButton("shuffle", help: "在当前书籍或内置文章里随机换一段", action: #selector(randomTapped))
         let titles = TypingTestTitleBlock(title: articleTitle, detail: articleDetail)
-        add(headerRow(titles, trailing: [random, startButton, finishButton]), to: content)
-        add(metricRow([speedCard, keysCard, backspaceCard, accuracyCard]), to: content)
+        add(headerRow(titles, leading: [sidebarButton], trailing: [random, startButton, finishButton, cellsButton]), to: content)
+        let strip = metricRow([speedCard, keysCard, backspaceCard, accuracyCard])
+        add(strip, to: content)
         resultStack.isHidden = true
         add(resultStack, to: content)
         progress.translatesAutoresizingMaskIntoConstraints = false
         progress.widthAnchor.constraint(equalToConstant: 110).isActive = true
         add(row([statusLabel, flexible(), progress, progressLabel, timeLabel]), to: content)
-        let target = textPanel(title: "原文", hint: "正确 / 待改 / 未输入", textView: targetText)
-        let input = textPanel(title: "输入", hint: "首键计时 · 组字不判错", textView: editor)
-        add(target, to: content, flexible: true)
-        add(input, to: content, flexible: true)
-        // Original text gets the larger share; both stay usable at the minimum size.
-        let share = target.heightAnchor.constraint(equalTo: input.heightAnchor, multiplier: 1.4)
-        share.priority = .init(740)
-        share.isActive = true
+        // One card, two lines: the text to copy above, what is typed below.
+        add(pairedPanel(target: targetText, input: editor), to: content, flexible: true)
         speedChart.toolTip =
             "速度轨迹 · 计时含思考与纠错 · 标点逐字对照 · 仅保存成绩，不保存输入正文。"
             + "中文有效速度 = 正确字符 ÷ 总分钟；英文 WPM = 正确字符 ÷ 5 ÷ 总分钟。"
@@ -282,12 +303,15 @@ final class TypingSpeedSettingsViewController: NSViewController, TypingPracticeT
         speedChart.setAccessibilityLabel("速度轨迹")
         speedChart.heightAnchor.constraint(equalToConstant: 88).isActive = true
         add(speedChart, to: content)
+        cellViews = [strip, speedChart]
     }
     private func buildHistory(in content: NSStackView) {
         let titles = TypingTestTitleBlock(title: articleTitle, detail: articleDetail)
-        add(headerRow(titles, trailing: [repairButton, clearButton]), to: content)
+        add(headerRow(titles, leading: [sidebarButton], trailing: [repairButton, clearButton, cellsButton]), to: content)
         add(contextPicker, to: content)
-        add(metricRow([speedCard, keysCard, backspaceCard, accuracyCard]), to: content)
+        let strip = metricRow([speedCard, keysCard, backspaceCard, accuracyCard])
+        add(strip, to: content)
+        cellViews = [strip]
         historySummary.font = .systemFont(ofSize: 12, weight: .medium)
         add(historySummary, to: content)
         speedChart.emptyMessage = "这篇文章还没有成绩，去完成第一次跟打吧"
@@ -583,7 +607,6 @@ final class TypingSpeedSettingsViewController: NSViewController, TypingPracticeT
     }
     private func renderResult(_ result: TypingTestResult) {
         clear(resultStack)
-        resultStack.isHidden = false
         setResultHeight(visible: true)
         let metrics = result.metrics
         let final = TypingTestStatTile(title: "最终字准", symbolName: "checkmark.circle")
@@ -604,7 +627,41 @@ final class TypingSpeedSettingsViewController: NSViewController, TypingPracticeT
 
     /// The result row adds height; raise the page minimum instead of squeezing the editor.
     private func setResultHeight(visible: Bool) {
-        pageScroll?.setMinimumHeight((isHistory ? 560 : 540) + (visible ? 84 : 0))
+        resultVisible = visible
+        applyCellsVisibility()
+    }
+
+    /// Stat cells (and the chart) can be folded away to give the text more room.
+    private func applyCellsVisibility() {
+        cellViews.forEach { $0.isHidden = cellsHidden }
+        if !resultVisible || cellsHidden { resultStack.isHidden = true } else { resultStack.isHidden = false }
+        var height: CGFloat = isHistory ? 560 : 540
+        if cellsHidden { height -= isHistory ? 66 : 164 }
+        else if resultVisible { height += 84 }
+        pageScroll?.setMinimumHeight(height)
+        let symbol = cellsHidden ? "rectangle.grid.2x2" : "rectangle.grid.2x2.fill"
+        cellsButton.image = NSImage(systemSymbolName: symbol, accessibilityDescription: "数据格")
+        cellsButton.toolTip = cellsHidden ? "显示数据格" : "隐藏数据格，给文字留出更多空间"
+        cellsButton.setAccessibilityLabel(cellsButton.toolTip)
+    }
+
+    @objc private func toggleCells() {
+        cellsHidden.toggle()
+        if telemetryEnabled { UserDefaults.standard.set(cellsHidden, forKey: Self.cellsHiddenKey) }
+        applyCellsVisibility()
+    }
+
+    @objc private func toggleMaterials() {
+        setMaterialsCollapsed(!materials.isCollapsed, animated: true)
+        if telemetryEnabled { UserDefaults.standard.set(materials.isCollapsed, forKey: Self.materialsCollapsedKey) }
+    }
+
+    private func setMaterialsCollapsed(_ collapsed: Bool, animated: Bool) {
+        materials.setCollapsed(collapsed, animated: animated)
+        sidebarButton.image = NSImage(systemSymbolName: collapsed ? "sidebar.left" : "sidebar.leading",
+                                      accessibilityDescription: "素材栏")
+        sidebarButton.toolTip = collapsed ? "展开素材栏" : "收起素材栏"
+        sidebarButton.setAccessibilityLabel(sidebarButton.toolTip)
     }
 
     private func renderTarget(states: [TypingTestCharacterState]) {
@@ -754,11 +811,7 @@ final class TypingSpeedSettingsViewController: NSViewController, TypingPracticeT
         }
     }
 
-    private func textPanel(title: String, hint: String, textView: NSTextView) -> NSView {
-        let titleLabel = label(title, size: 11, weight: .semibold)
-        let hintLabel = label(hint, size: 10.5)
-        hintLabel.textColor = RimeUI.textMuted
-        hintLabel.setContentCompressionResistancePriority(.init(100), for: .horizontal)
+    private func textScroll(_ textView: NSTextView) -> NSScrollView {
         let scroll = NSScrollView()
         scroll.drawsBackground = false
         scroll.hasVerticalScroller = true
@@ -770,24 +823,57 @@ final class TypingSpeedSettingsViewController: NSViewController, TypingPracticeT
         textView.textContainer?.widthTracksTextView = true
         textView.textContainer?.containerSize = NSSize(width: 0, height: CGFloat.greatestFiniteMagnitude)
         scroll.documentView = textView
-        let box = TypingTestSurfaceView()
-        for subview in [titleLabel, hintLabel, scroll] {
-            subview.translatesAutoresizingMaskIntoConstraints = false
-            box.addSubview(subview)
+        scroll.translatesAutoresizingMaskIntoConstraints = false
+        return scroll
+    }
+
+    /// Source text on the first line, typed text on the second, in one card.
+    private func pairedPanel(target: NSTextView, input: NSTextView) -> NSView {
+        func caption(_ title: String, _ hint: String) -> (NSTextField, NSTextField) {
+            let titleLabel = label(title, size: 11, weight: .semibold)
+            let hintLabel = label(hint, size: 10.5)
+            hintLabel.textColor = RimeUI.textMuted
+            hintLabel.setContentCompressionResistancePriority(.init(100), for: .horizontal)
+            return (titleLabel, hintLabel)
         }
+        let (targetTitle, targetHint) = caption("原文", "正确 / 待改 / 未输入")
+        let (inputTitle, inputHint) = caption("输入", "首键计时 · 组字不判错")
+        let targetScroll = textScroll(target), inputScroll = textScroll(input)
+        let divider = TypingTestDividerView()
+        let card = TypingTestSurfaceView()
+        for subview in [targetTitle, targetHint, targetScroll, divider, inputTitle, inputHint, inputScroll] {
+            subview.translatesAutoresizingMaskIntoConstraints = false
+            card.addSubview(subview)
+        }
+        let share = targetScroll.heightAnchor.constraint(equalTo: inputScroll.heightAnchor, multiplier: 1.4)
+        share.priority = .init(740)
         NSLayoutConstraint.activate([
-            titleLabel.leadingAnchor.constraint(equalTo: box.leadingAnchor, constant: 14),
-            titleLabel.topAnchor.constraint(equalTo: box.topAnchor, constant: 9),
-            hintLabel.leadingAnchor.constraint(greaterThanOrEqualTo: titleLabel.trailingAnchor, constant: 10),
-            hintLabel.trailingAnchor.constraint(equalTo: box.trailingAnchor, constant: -14),
-            hintLabel.firstBaselineAnchor.constraint(equalTo: titleLabel.firstBaselineAnchor),
-            scroll.leadingAnchor.constraint(equalTo: box.leadingAnchor, constant: 2),
-            scroll.trailingAnchor.constraint(equalTo: box.trailingAnchor, constant: -2),
-            scroll.topAnchor.constraint(equalTo: titleLabel.bottomAnchor, constant: 4),
-            scroll.bottomAnchor.constraint(equalTo: box.bottomAnchor, constant: -6),
-            scroll.heightAnchor.constraint(greaterThanOrEqualToConstant: 62),
+            targetTitle.leadingAnchor.constraint(equalTo: card.leadingAnchor, constant: 14),
+            targetTitle.topAnchor.constraint(equalTo: card.topAnchor, constant: 9),
+            targetHint.leadingAnchor.constraint(greaterThanOrEqualTo: targetTitle.trailingAnchor, constant: 10),
+            targetHint.trailingAnchor.constraint(equalTo: card.trailingAnchor, constant: -14),
+            targetHint.firstBaselineAnchor.constraint(equalTo: targetTitle.firstBaselineAnchor),
+            targetScroll.leadingAnchor.constraint(equalTo: card.leadingAnchor, constant: 2),
+            targetScroll.trailingAnchor.constraint(equalTo: card.trailingAnchor, constant: -2),
+            targetScroll.topAnchor.constraint(equalTo: targetTitle.bottomAnchor, constant: 3),
+            targetScroll.heightAnchor.constraint(greaterThanOrEqualToConstant: 56),
+            divider.leadingAnchor.constraint(equalTo: card.leadingAnchor, constant: 14),
+            divider.trailingAnchor.constraint(equalTo: card.trailingAnchor, constant: -14),
+            divider.topAnchor.constraint(equalTo: targetScroll.bottomAnchor, constant: 4),
+            divider.heightAnchor.constraint(equalToConstant: 1),
+            inputTitle.leadingAnchor.constraint(equalTo: card.leadingAnchor, constant: 14),
+            inputTitle.topAnchor.constraint(equalTo: divider.bottomAnchor, constant: 8),
+            inputHint.leadingAnchor.constraint(greaterThanOrEqualTo: inputTitle.trailingAnchor, constant: 10),
+            inputHint.trailingAnchor.constraint(equalTo: card.trailingAnchor, constant: -14),
+            inputHint.firstBaselineAnchor.constraint(equalTo: inputTitle.firstBaselineAnchor),
+            inputScroll.leadingAnchor.constraint(equalTo: card.leadingAnchor, constant: 2),
+            inputScroll.trailingAnchor.constraint(equalTo: card.trailingAnchor, constant: -2),
+            inputScroll.topAnchor.constraint(equalTo: inputTitle.bottomAnchor, constant: 3),
+            inputScroll.bottomAnchor.constraint(equalTo: card.bottomAnchor, constant: -6),
+            inputScroll.heightAnchor.constraint(greaterThanOrEqualToConstant: 56),
+            share,
         ])
-        return box
+        return card
     }
     private func roundedBox(_ content: NSView) -> NSView {
         let box = TypingTestSurfaceView()
@@ -812,7 +898,7 @@ final class TypingSpeedSettingsViewController: NSViewController, TypingPracticeT
     }
     /// Title on the left, controls on the right; the title's edge is pinned to the
     /// controls, so it truncates only when it truly has no room left.
-    private func headerRow(_ titles: NSView, trailing: [NSView]) -> NSView {
+    private func headerRow(_ titles: NSView, leading: [NSView] = [], trailing: [NSView]) -> NSView {
         let container = NSView()
         let controls = row(trailing)
         controls.distribution = .gravityAreas
@@ -822,8 +908,20 @@ final class TypingSpeedSettingsViewController: NSViewController, TypingPracticeT
         titles.translatesAutoresizingMaskIntoConstraints = false
         container.addSubview(titles)
         container.addSubview(controls)
+        var titleLeading = container.leadingAnchor
+        var titleInset: CGFloat = 0
+        if let first = leading.first {
+            first.translatesAutoresizingMaskIntoConstraints = false
+            container.addSubview(first)
+            NSLayoutConstraint.activate([
+                first.leadingAnchor.constraint(equalTo: container.leadingAnchor),
+                first.centerYAnchor.constraint(equalTo: container.centerYAnchor),
+            ])
+            titleLeading = first.trailingAnchor
+            titleInset = 10
+        }
         NSLayoutConstraint.activate([
-            titles.leadingAnchor.constraint(equalTo: container.leadingAnchor),
+            titles.leadingAnchor.constraint(equalTo: titleLeading, constant: titleInset),
             titles.topAnchor.constraint(equalTo: container.topAnchor),
             titles.bottomAnchor.constraint(equalTo: container.bottomAnchor),
             controls.trailingAnchor.constraint(equalTo: container.trailingAnchor),
@@ -894,6 +992,9 @@ final class TypingSpeedSettingsViewController: NSViewController, TypingPracticeT
     var smokeMaterialRowCount: Int { materials.smokeRowCount }
     var smokeMaterials: TypingTestMaterialColumn { materials }
     var smokePageScroll: NSScrollView? { pageScroll }
+    func smokeToggleCells() { toggleCells() }
+    func smokeToggleMaterials() { setMaterialsCollapsed(!materials.isCollapsed, animated: false) }
+    var smokeCellsHidden: Bool { cellsHidden }
     var smokeTargetScroll: NSScrollView? { targetText.enclosingScrollView }
     var smokeTargetString: String { targetText.string }
     var smokeEditor: TypingTestTextView { editor }
@@ -952,7 +1053,7 @@ private final class TypingTestPageScrollView: NSScrollView {
 }
 
 private class TypingTestSurfaceView: NSView {
-    var cornerRadius: CGFloat { 10 }
+    var cornerRadius: CGFloat { 12 }
     override func draw(_ dirtyRect: NSRect) {
         super.draw(dirtyRect)
         let path = NSBezierPath(roundedRect: bounds.insetBy(dx: 0.5, dy: 0.5), xRadius: cornerRadius, yRadius: cornerRadius)

@@ -4,7 +4,7 @@ import AppKit
 /// imported books (book → chapter → passage). Only articles and passages are
 /// selectable; books and chapters expand and collapse.
 final class TypingTestMaterialColumn: NSView, NSOutlineViewDataSource, NSOutlineViewDelegate {
-    static let preferredWidth: CGFloat = 236
+    static let preferredWidth: CGFloat = 188
 
     private final class Node: NSObject {
         enum Kind {
@@ -48,7 +48,7 @@ final class TypingTestMaterialColumn: NSView, NSOutlineViewDataSource, NSOutline
 
     private let library: TypingTestLibraryStore
     private let outline = NSOutlineView()
-    private let importButton = RimePointingHandButton(title: "导入 EPUB", target: nil, action: nil)
+    private let importButton = RimePointingHandButton(title: "", target: nil, action: nil)
     private let removeButton = RimePointingHandButton(title: "移除此书", target: nil, action: nil)
     private let caption = NSTextField(wrappingLabelWithString: "")
     private var roots: [Node] = []
@@ -77,7 +77,8 @@ final class TypingTestMaterialColumn: NSView, NSOutlineViewDataSource, NSOutline
         importButton.bezelStyle = .rounded
         importButton.controlSize = .small
         importButton.image = NSImage(systemSymbolName: "plus", accessibilityDescription: "导入 EPUB 电子书")
-        importButton.imagePosition = .imageLeading
+        importButton.imagePosition = .imageOnly
+        importButton.setAccessibilityLabel("导入 EPUB 电子书")
         importButton.toolTip = "导入 EPUB 电子书，切分为跟打段落；也可以把 .epub 文件拖到这里"
         importButton.refusesFirstResponder = true
         let header = NSStackView(views: [title, NSView(), importButton])
@@ -119,29 +120,60 @@ final class TypingTestMaterialColumn: NSView, NSOutlineViewDataSource, NSOutline
         caption.font = .systemFont(ofSize: 11)
         caption.textColor = RimeUI.textSecondary
         caption.maximumNumberOfLines = 3
-        caption.preferredMaxLayoutWidth = Self.preferredWidth - 28
+        caption.preferredMaxLayoutWidth = Self.preferredWidth - 22
         let footer = NSStackView(views: [caption, removeButton])
         footer.orientation = .vertical
         footer.alignment = .leading
         footer.spacing = 6
         footer.translatesAutoresizingMaskIntoConstraints = false
 
-        addSubview(header)
-        addSubview(scroll)
-        addSubview(footer)
+        // Content keeps its natural width inside a clipped outer view, so the
+        // column can fold to nothing without breaking its own constraints.
+        let inner = NSView()
+        inner.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(inner)
+        inner.addSubview(header)
+        inner.addSubview(scroll)
+        inner.addSubview(footer)
+        wantsLayer = true
+        layer?.masksToBounds = true
+        widthConstraint = widthAnchor.constraint(equalToConstant: Self.preferredWidth)
         NSLayoutConstraint.activate([
-            header.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 14),
-            header.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -10),
-            header.topAnchor.constraint(equalTo: topAnchor, constant: 14),
-            scroll.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 6),
-            scroll.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -4),
+            inner.leadingAnchor.constraint(equalTo: leadingAnchor),
+            inner.topAnchor.constraint(equalTo: topAnchor),
+            inner.bottomAnchor.constraint(equalTo: bottomAnchor),
+            inner.widthAnchor.constraint(equalToConstant: Self.preferredWidth),
+            header.leadingAnchor.constraint(equalTo: inner.leadingAnchor, constant: 12),
+            header.trailingAnchor.constraint(equalTo: inner.trailingAnchor, constant: -8),
+            header.topAnchor.constraint(equalTo: inner.topAnchor, constant: 12),
+            scroll.leadingAnchor.constraint(equalTo: inner.leadingAnchor, constant: 4),
+            scroll.trailingAnchor.constraint(equalTo: inner.trailingAnchor, constant: -2),
             scroll.topAnchor.constraint(equalTo: header.bottomAnchor, constant: 8),
-            footer.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 14),
-            footer.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -14),
+            footer.leadingAnchor.constraint(equalTo: inner.leadingAnchor, constant: 12),
+            footer.trailingAnchor.constraint(equalTo: inner.trailingAnchor, constant: -10),
             footer.topAnchor.constraint(equalTo: scroll.bottomAnchor, constant: 8),
-            footer.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -12),
-            widthAnchor.constraint(equalToConstant: Self.preferredWidth),
+            footer.bottomAnchor.constraint(equalTo: inner.bottomAnchor, constant: -10),
+            widthConstraint,
         ])
+    }
+
+    private var widthConstraint: NSLayoutConstraint!
+    private(set) var isCollapsed = false
+
+    /// Folds the column away (or back) so the practice area can use the space.
+    func setCollapsed(_ collapsed: Bool, animated: Bool = true) {
+        guard collapsed != isCollapsed else { return }
+        isCollapsed = collapsed
+        let width = collapsed ? 0 : Self.preferredWidth
+        if animated {
+            NSAnimationContext.runAnimationGroup { context in
+                context.duration = 0.18
+                context.allowsImplicitAnimation = true
+                widthConstraint.animator().constant = width
+            }
+        } else {
+            widthConstraint.constant = width
+        }
     }
 
     // MARK: Data
@@ -313,6 +345,7 @@ final class TypingTestMaterialColumn: NSView, NSOutlineViewDataSource, NSOutline
     // MARK: Test hooks
 
     var smokeRowCount: Int { outline.numberOfRows }
+    var smokeWidth: CGFloat { frame.width }
     var smokeOutline: NSOutlineView { outline }
 }
 

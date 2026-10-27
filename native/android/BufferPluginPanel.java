@@ -73,7 +73,8 @@ final class BufferPluginPanel extends ScrollView {
         for(int i=0;i<directionButtons.length;i++) { directionButtons[i].theme(theme); directionButtons[i].setSelected(DIRECTION_IDS[i].equals(direction)); }
         {
             OpenAiSettings.Snapshot profile=new OpenAiSettings(getContext()).snapshot();
-            String name=pluginName(pluginID);
+            AssistantSettings.Preset preset=new AssistantSettings(getContext()).snapshot().preset(pluginID);
+            String name=preset==null?pluginName(pluginID):preset.name;
             notice.setText(name==null?"普通 Buffer 保留本次输入，确认发送后才进入输入框。"
                     :profile.remote(pluginID)?java.net.URI.create(profile.baseURL).getHost()+" · "+profile.model+"\n"+("translate".equals(pluginID)?"确认 Buffer 原文后自动发送给已配置的 AI；结果需手动发送。":"点执行后将本次 Buffer 原文发送给 AI；结果需确认发送。")
                     :"translate".equals(pluginID)?"本机中英词典查译，未覆盖词保留原文。\n逐词查译不保证句子语法；输入后自动本机查词，结果需手动发送。":name+"使用 OpenAI 格式本机 Mock。\n无网络请求；在 RIMES 主应用的 AI 服务中配置联网 AI。画画仅生成提示词。");

@@ -677,6 +677,20 @@
       "plugins": [
         "builtin.typing-speed"
       ]
+    },
+    {
+      "source": "native/shared/typing-practice/material_library.hpp",
+      "destination": "Shared/TypingPractice/material_library.hpp",
+      "plugins": [
+        "builtin.typing-speed"
+      ]
+    },
+    {
+      "source": "native/shared/typing-practice/material_library.cpp",
+      "destination": "Shared/TypingPractice/material_library.cpp",
+      "plugins": [
+        "builtin.typing-speed"
+      ]
     }
   ]
 }

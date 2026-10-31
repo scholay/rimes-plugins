@@ -1793,6 +1793,24 @@ struct ExtensionPages::Impl {
     }
     if (msg == WM_GETDLGCODE)
       return DLGC_WANTALLKEYS | DLGC_WANTCHARS | DLGC_WANTARROWS | DLGC_WANTTAB;
+    if (msg == core::kTypingPracticeCaretMessage) {
+      if (!l || !core::IsTypingPracticeEditor(h) || self->suppress) return 0;
+      CHARRANGE selection{};
+      SendMessageW(h, EM_EXGETSEL, 0, reinterpret_cast<LPARAM>(&selection));
+      POINTL point{};
+      SendMessageW(h, EM_POSFROMCHAR, reinterpret_cast<WPARAM>(&point), selection.cpMin);
+      // GetTextExt includes RichEdit's paragraph-after spacing in a collapsed
+      // range after a commit. Our cell, rather than that padded paragraph,
+      // defines the candidate anchor in this explicitly owned editor.
+      RECT cell{point.x, point.y, point.x + self->Px(1), point.y + self->Px(28)};
+      MapWindowPoints(h, nullptr, reinterpret_cast<POINT*>(&cell), 2);
+      RECT viewport{}, intersection{};
+      GetClientRect(self->hwnd, &viewport);
+      MapWindowPoints(self->hwnd, nullptr, reinterpret_cast<POINT*>(&viewport), 2);
+      if (!IntersectRect(&intersection, &cell, &viewport)) return 0;
+      *reinterpret_cast<RECT*>(l) = cell;
+      return 1;
+    }
     if (msg == WM_PAINT && self->suppress) {
       // WM_SETREDRAW(FALSE) removes WS_VISIBLE and makes the TSF host appear
       // to lose its target mid-layout. Defer only this frame while formatting;

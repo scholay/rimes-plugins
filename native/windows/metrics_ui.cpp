@@ -328,11 +328,24 @@ struct ExtensionPages::Impl {
       RevealCaret(); return;
     }
     std::size_t unchanged = 0;
-    if (before == formatted && formatted_columns == track_columns && formatted_dpi == dpi && formatted_article == a.id)
+    const bool same_layout = formatted_columns == track_columns && formatted_dpi == dpi && formatted_article == a.id;
+    if (same_layout)
       while (unchanged < track_formatted.size() && unchanged < formatted.size() && track_formatted[unchanged] == formatted[unchanged]) ++unchanged;
     POINT scroll_pos{}; SendMessageW(editor, EM_GETSCROLLPOS, 0, reinterpret_cast<LPARAM>(&scroll_pos));
     suppress = true;
-    if (before != formatted) SetWindowTextW(editor, formatted.c_str());
+    if (before != formatted) {
+      // A wrap usually adds just one CR. Preserve the native text/format runs
+      // preceding it instead of resetting the complete RichEdit document.
+      std::size_t prefix = 0, suffix = 0;
+      while (prefix < before.size() && prefix < formatted.size() && before[prefix] == formatted[prefix]) ++prefix;
+      while (suffix < before.size() - prefix && suffix < formatted.size() - prefix &&
+             before[before.size() - suffix - 1] == formatted[formatted.size() - suffix - 1]) ++suffix;
+      CHARRANGE changed{static_cast<LONG>(prefix), static_cast<LONG>(before.size() - suffix)};
+      SendMessageW(editor, EM_EXSETSEL, 0, reinterpret_cast<LPARAM>(&changed));
+      const auto replacement = formatted.substr(prefix, formatted.size() - prefix - suffix);
+      SendMessageW(editor, EM_REPLACESEL, FALSE, reinterpret_cast<LPARAM>(replacement.c_str()));
+      unchanged = std::min(unchanged, prefix);
+    }
     const int full_height = 66 + static_cast<int>(track_rows.size()) * 76;
     if (positions.contains(7004)) {
       auto& bounds = positions[7004];
@@ -344,8 +357,11 @@ struct ExtensionPages::Impl {
       }
     }
     RECT inset{track_left + Px(3), Px(42), client.right - Px(10), client.bottom - Px(14)};
-    SendMessageW(editor, EM_SETRECT, 0, reinterpret_cast<LPARAM>(&inset));
-    SendMessageW(editor, EM_SETTARGETDEVICE, 0, 1); // Explicit rows; no word-boundary rewrap.
+    RECT old_inset{}; SendMessageW(editor, EM_GETRECT, 0, reinterpret_cast<LPARAM>(&old_inset));
+    if (!EqualRect(&old_inset, &inset))
+      SendMessageW(editor, EM_SETRECTNP, 0, reinterpret_cast<LPARAM>(&inset));
+    if (!same_layout)
+      SendMessageW(editor, EM_SETTARGETDEVICE, 0, 1); // Explicit rows; no word-boundary rewrap.
     PARAFORMAT2 paragraph{}; paragraph.cbSize = sizeof(paragraph);
     paragraph.dwMask = PFM_LINESPACING | PFM_STARTINDENT | PFM_OFFSET | PFM_SPACEAFTER;
     // Every display row is an explicit paragraph. Give the glyph line its
@@ -358,6 +374,8 @@ struct ExtensionPages::Impl {
     auto dc = GetDC(editor); auto old = SelectObject(dc, editor_font);
     LONG position = 0; std::size_t line_index = 0;
     std::size_t typed_index = 0;
+    std::size_t paragraph_row = static_cast<std::size_t>(-1);
+    std::size_t dirty_start = unchanged;
     for (const auto& c : mat::Characters(Utf8(formatted))) {
       const auto text = Wide(c); CHARRANGE span{position, position + static_cast<LONG>(text.size())};
       const bool line_break = c == "\r" || c == "\n" || c == "\r\n";
@@ -368,10 +386,14 @@ struct ExtensionPages::Impl {
         else ++typed_index;
         position = span.cpMax; continue;
       }
+      dirty_start = std::min(dirty_start, static_cast<std::size_t>(span.cpMin));
       SendMessageW(editor, EM_EXSETSEL, 0, reinterpret_cast<LPARAM>(&span));
       paragraph.dxStartIndent = indents[std::min(line_index, indents.size() - 1)] * 28 * 15;
       paragraph.dxOffset = 0;
-      SendMessageW(editor, EM_SETPARAFORMAT, 0, reinterpret_cast<LPARAM>(&paragraph));
+      if (paragraph_row != line_index) {
+        SendMessageW(editor, EM_SETPARAFORMAT, 0, reinterpret_cast<LPARAM>(&paragraph));
+        paragraph_row = line_index;
+      }
       if (c == "\r" || c == "\n" || c == "\r\n") ++line_index;
       else {
         SIZE extent{}; GetTextExtentPoint32W(dc, text.data(), static_cast<int>(text.size()), &extent);
@@ -392,7 +414,18 @@ struct ExtensionPages::Impl {
     PARAFORMAT2 trailing{}; trailing.cbSize = sizeof(trailing); trailing.dwMask = PFM_SPACEAFTER;
     trailing.dySpaceAfter = 48 * 15;
     SendMessageW(editor, EM_SETPARAFORMAT, 0, reinterpret_cast<LPARAM>(&trailing));
-    CalibrateTrackAdvances(formatted);
+    // Font shaping and trailing spaces may affect earlier glyphs in this
+    // paragraph. Recheck that whole row, but leave preceding rows untouched.
+    while (dirty_start && formatted[dirty_start - 1] != L'\r') --dirty_start;
+    // Removing a CR can merge paragraphs and inherit the following row's
+    // indent even when all surviving characters match the cached prefix.
+    // Restore that paragraph before measuring, not after spacing is calibrated.
+    const auto dirty_row = static_cast<std::size_t>(std::count(formatted.begin(), formatted.begin() + dirty_start, L'\r'));
+    CHARRANGE dirty_paragraph{static_cast<LONG>(dirty_start), static_cast<LONG>(dirty_start)};
+    SendMessageW(editor, EM_EXSETSEL, 0, reinterpret_cast<LPARAM>(&dirty_paragraph));
+    paragraph.dxStartIndent = indents[std::min(dirty_row, indents.size() - 1)] * 28 * 15;
+    SendMessageW(editor, EM_SETPARAFORMAT, 0, reinterpret_cast<LPARAM>(&paragraph));
+    CalibrateTrackAdvances(formatted, static_cast<LONG>(dirty_start));
     CHARRANGE restored{physical(begin), physical(end)};
     SendMessageW(editor, EM_EXSETSEL, 0, reinterpret_cast<LPARAM>(&restored));
     if (restored.cpMin == restored.cpMax) {
@@ -408,7 +441,7 @@ struct ExtensionPages::Impl {
     RevealCaret();
     core::NotifyTypingPracticeLayoutChanged(editor);
   }
-  void CalibrateTrackAdvances(const std::wstring& formatted) {
+  void CalibrateTrackAdvances(const std::wstring& formatted, LONG dirty_start) {
     // Use native text-store geometry, including fallback fonts, shaping and
     // trailing-space rules. GDI's isolated glyph width can differ from the
     // advance RichEdit actually uses and accumulate across a long row.
@@ -434,6 +467,9 @@ struct ExtensionPages::Impl {
       CHARRANGE span{position, position + static_cast<LONG>(text.size())};
       if (token == "\r" || token == "\n" || token == "\r\n") {
         ++row; column = 0; previous = {}; position = span.cpMax; continue;
+      }
+      if (span.cpMax <= dirty_start) {
+        previous = span; ++column; position = span.cpMax; continue;
       }
       const int indent = row < track_rows.size() ? track_rows[row].indent : 0;
       const int start = track_left + Px(3) + Px((indent + column) * 28);

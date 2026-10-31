@@ -159,11 +159,15 @@ struct ExtensionPages::Impl {
   int track_columns = 20, formatted_columns = 0;
   unsigned formatted_dpi = 0;
   std::wstring track_formatted;
+  Json track_correctness = Json::array();
   std::string formatted_article;
   std::vector<rimes::practice::materials::TrackRow> track_rows;
   std::vector<metrics::Article> articles = metrics::Articles();
   std::vector<Json> books;
-  bool materials_visible = true, books_tab = false;
+  bool materials_visible = true, books_tab = false, grid_visible = true, cells_visible = true;
+  std::string selected_book;
+  int track_left = 12;
+  float practice_width = 650, track_top = 268;
   struct MaterialTask {
     std::atomic<bool> done{false};
     std::vector<metrics::Article> articles;
@@ -180,8 +184,16 @@ struct ExtensionPages::Impl {
   std::vector<int> years;
   std::string selected_day = metrics::Day(metrics::Wall()), source, comparison;
   std::uint64_t revision = 0;
+  UINT_PTR practice_generation = 0;
   std::wstring status = L"选择文章后开始跟打", message;
-  bool suppress = false, visible = false, stopping = false, was_armed = false;
+  bool suppress = false, visible = false, stopping = false, was_armed = false, ime_composing = false,
+       colors_pending = false;
+  bool ComposingEditor() const { return ime_composing || (editor && Composing(editor)); }
+  void RememberView() {
+    service->SetPracticePreferences({{"materialsCollapsed", !materials_visible},
+                                    {"gridHidden", !grid_visible}, {"cellsHidden", !cells_visible},
+                                    {"lastArticleID", articles.at(article).id}});
+  }
   Json last_states;
   Json last_practice;
   Json last_data;
@@ -195,6 +207,13 @@ struct ExtensionPages::Impl {
   explicit Impl(HWND owner, ExtensionCallbacks callbacks)
       : parent(owner), cb(std::move(callbacks)), service(cb.metrics) {
     if (!service) throw std::runtime_error("Extension metrics service missing");
+    const auto preferences = service->PracticePreferences();
+    materials_visible = !preferences.value("materialsCollapsed", false);
+    grid_visible = !preferences.value("gridHidden", false);
+    cells_visible = !preferences.value("cellsHidden", false);
+    const auto selected = preferences.value("lastArticleID", std::string());
+    for (std::size_t i = 0; i < articles.size(); ++i)
+      if (articles[i].id == selected) article = static_cast<int>(i);
     LoadLibraryW(L"Msftedit.dll");
     INITCOMMONCONTROLSEX init{sizeof(init), ICC_DATE_CLASSES};
     InitCommonControlsEx(&init);
@@ -238,7 +257,9 @@ struct ExtensionPages::Impl {
     return h;
   }
   HWND Button(int id, const wchar_t* text) {
-    return Make(id, L"BUTTON", text, BS_OWNERDRAW);
+    const auto h = Make(id, L"BUTTON", text, BS_OWNERDRAW);
+    if (Text(h) != text) SetWindowTextW(h, text);
+    return h;
   }
   HWND Combo(int id) {
     auto h = Make(id, L"COMBOBOX", L"", CBS_DROPDOWNLIST | WS_VSCROLL);
@@ -246,16 +267,21 @@ struct ExtensionPages::Impl {
     return h;
   }
   void LayoutTrack() {
-    if (!editor || Composing(editor)) return;
+    if (!editor || ComposingEditor()) return;
     namespace mat = rimes::practice::materials;
     RECT client{}; GetClientRect(editor, &client);
-    track_columns = std::max(4, (static_cast<int>(client.right) - Px(34)) / std::max(1, Px(28)));
+    track_columns = std::max(6, (static_cast<int>(client.right) - Px(24)) / std::max(1, Px(28)));
+    track_left = (static_cast<int>(client.right) - track_columns * Px(28)) / 2;
     const auto& a = articles.at(article);
     track_rows = mat::TrackRows(a.display_text.empty() ? a.text : a.display_text, track_columns, a.language == "chinese" ? 2 : 0);
     const auto before = Text(editor);
     const auto chars = mat::Characters(Utf8(before));
     std::vector<std::string> typed;
     for (const auto& c : chars) if (c != "\r" && c != "\n" && c != "\r\n") typed.push_back(c);
+    // Extra characters still have a visible input row; never clip accepted text.
+    const auto expected_count = metrics::Characters(a.text).size();
+    for (auto start = expected_count; start < typed.size(); start += track_columns)
+      track_rows.push_back({"", start, std::min<std::size_t>(track_columns, typed.size() - start), 0});
     CHARRANGE saved{}; SendMessageW(editor, EM_EXGETSEL, 0, reinterpret_cast<LPARAM>(&saved));
     auto logical = [&](LONG at) { return metrics::Characters(Utf8(before.substr(0, static_cast<std::size_t>(std::max(0L, at))))).size(); };
     const auto begin = logical(saved.cpMin), end = logical(saved.cpMax);
@@ -287,7 +313,17 @@ struct ExtensionPages::Impl {
     suppress = true;
     SendMessageW(editor, WM_SETREDRAW, FALSE, 0);
     if (before != formatted) SetWindowTextW(editor, formatted.c_str());
-    RECT inset{Px(12), Px(42), client.right - Px(22), client.bottom - Px(14)};
+    const int full_height = 66 + static_cast<int>(track_rows.size()) * 76;
+    if (positions.contains(7004)) {
+      auto& bounds = positions[7004];
+      if (bounds.bottom - bounds.top != full_height) {
+        bounds.bottom = bounds.top + full_height;
+        total = static_cast<int>(bounds.bottom + 30);
+        ShowControls();
+        GetClientRect(editor, &client);
+      }
+    }
+    RECT inset{track_left + Px(3), Px(42), client.right - Px(10), client.bottom - Px(14)};
     SendMessageW(editor, EM_SETRECT, 0, reinterpret_cast<LPARAM>(&inset));
     SendMessageW(editor, EM_SETTARGETDEVICE, 0, 1); // Explicit rows; no word-boundary rewrap.
     PARAFORMAT2 paragraph{}; paragraph.cbSize = sizeof(paragraph);
@@ -296,11 +332,17 @@ struct ExtensionPages::Impl {
     paragraph.dxStartIndent = indents.front() * 28 * 15;
     paragraph.bLineSpacingRule = 4; paragraph.dyLineSpacing = 76 * 15;
     auto dc = GetDC(editor); auto old = SelectObject(dc, editor_font);
+    const auto correctness = service->Practice().value("typedCorrectness", Json::array());
     LONG position = 0; std::size_t line_index = 0;
+    std::size_t typed_index = 0;
     for (const auto& c : mat::Characters(Utf8(formatted))) {
       const auto text = Wide(c); CHARRANGE span{position, position + static_cast<LONG>(text.size())};
-      if (span.cpMax <= static_cast<LONG>(unchanged)) {
-        if (c == "\r" || c == "\n" || c == "\r\n") ++line_index;
+      const bool line_break = c == "\r" || c == "\n" || c == "\r\n";
+      const bool same_correctness = typed_index < correctness.size() &&
+          typed_index < track_correctness.size() && correctness[typed_index] == track_correctness[typed_index];
+      if (span.cpMax <= static_cast<LONG>(unchanged) && (line_break || same_correctness)) {
+        if (line_break) ++line_index;
+        else ++typed_index;
         position = span.cpMax; continue;
       }
       SendMessageW(editor, EM_EXSETSEL, 0, reinterpret_cast<LPARAM>(&span));
@@ -310,9 +352,13 @@ struct ExtensionPages::Impl {
       if (c == "\r" || c == "\n" || c == "\r\n") ++line_index;
       else {
         SIZE extent{}; GetTextExtentPoint32W(dc, text.data(), static_cast<int>(text.size()), &extent);
-        CHARFORMAT2W format{}; format.cbSize = sizeof(format); format.dwMask = CFM_SPACING;
+        CHARFORMAT2W format{}; format.cbSize = sizeof(format); format.dwMask = CFM_SPACING | CFM_COLOR | CFM_BACKCOLOR;
+        const bool incorrect = typed_index < correctness.size() && !correctness[typed_index].get<bool>();
+        format.crTextColor = ui::ToColorRef(incorrect ? Palette().danger_text : Palette().text_primary);
+        format.crBackColor = ui::ToColorRef(incorrect ? ui::Blend(Palette().surface, Palette().danger_text, .18f) : Palette().surface);
         format.sSpacing = static_cast<SHORT>(std::clamp(MulDiv(Px(28) - extent.cx, 1440, static_cast<int>(dpi)), -32000, 32000));
         SendMessageW(editor, EM_SETCHARFORMAT, SCF_SELECTION, reinterpret_cast<LPARAM>(&format));
+        ++typed_index;
       }
       position = span.cpMax;
     }
@@ -329,37 +375,89 @@ struct ExtensionPages::Impl {
       paragraph.dxStartIndent = indents[std::min(caret_row, indents.size() - 1)] * 28 * 15;
       paragraph.dwMask = PFM_LINESPACING | PFM_STARTINDENT | PFM_OFFSET;
       SendMessageW(editor, EM_SETPARAFORMAT, 0, reinterpret_cast<LPARAM>(&paragraph));
+      // Preedit is usually ASCII code; give its insertion attributes the same
+      // cell advance while leaving the IME free to own the marked range.
+      SIZE advance{}; auto insertion_dc = GetDC(editor); auto insertion_font = SelectObject(insertion_dc, editor_font);
+      GetTextExtentPoint32W(insertion_dc, L"n", 1, &advance);
+      SelectObject(insertion_dc, insertion_font); ReleaseDC(editor, insertion_dc);
+      CHARFORMAT2W insertion{}; insertion.cbSize = sizeof(insertion);
+      insertion.dwMask = CFM_SPACING | CFM_COLOR | CFM_BACKCOLOR;
+      insertion.sSpacing = static_cast<SHORT>(MulDiv(Px(28) - advance.cx, 1440, static_cast<int>(dpi)));
+      insertion.crTextColor = ui::ToColorRef(Palette().text_primary); insertion.crBackColor = ui::ToColorRef(Palette().surface);
+      SendMessageW(editor, EM_SETCHARFORMAT, SCF_SELECTION, reinterpret_cast<LPARAM>(&insertion));
     }
     track_formatted = formatted; formatted_columns = track_columns; formatted_dpi = dpi; formatted_article = a.id;
+    track_correctness = correctness;
     SendMessageW(editor, EM_SETSCROLLPOS, 0, reinterpret_cast<LPARAM>(&scroll_pos));
     SendMessageW(editor, WM_SETREDRAW, TRUE, 0);
     suppress = false; InvalidateRect(editor, nullptr, FALSE);
+    RevealCaret();
+  }
+  void RevealCaret() {
+    if (!editor || !positions.contains(7004) || GetFocus() != editor) return;
+    CHARRANGE selection{};
+    SendMessageW(editor, EM_EXGETSEL, 0, reinterpret_cast<LPARAM>(&selection));
+    POINTL caret{};
+    SendMessageW(editor, EM_POSFROMCHAR, reinterpret_cast<WPARAM>(&caret), selection.cpMax);
+    const auto top = positions[7004].top + caret.y * 96.0f / dpi - 40;
+    const auto next = static_cast<int>(top + 84 > scroll + height ? top + 84 - height : top < scroll ? top - 8 : scroll);
+    if (next != scroll) {
+      scroll = std::clamp(next, 0, std::max(0, total - height));
+      ShowControls(); InvalidateRect(hwnd, nullptr, FALSE);
+    }
   }
   void PaintTrack(HWND edit, HDC dc) {
     if (track_rows.empty()) return;
     RECT client{}; GetClientRect(edit, &client);
+    RECT clip{};
+    if (GetClipBox(dc, &clip) != ERROR) IntersectRect(&client, &client, &clip);
     POINT scroll_pos{}; SendMessageW(edit, EM_GETSCROLLPOS, 0, reinterpret_cast<LPARAM>(&scroll_pos));
     auto old = SelectObject(dc, editor_font); SetBkMode(dc, TRANSPARENT);
-    auto grid = CreateSolidBrush(ui::ToColorRef(ui::Blend(Palette().surface, Palette().text_primary, .10f)));
+    auto grid = CreatePen(PS_SOLID, std::max(1, Px(1)), ui::ToColorRef(Palette().border));
+    const auto old_pen = SelectObject(dc, grid);
     for (std::size_t row = 0; row < track_rows.size(); ++row) {
       const auto y = Px(10 + static_cast<int>(row) * 76) - scroll_pos.y;
-      if (y + Px(28) < 0 || y > client.bottom) continue;
+      if (y + Px(60) < client.top || y > client.bottom) continue;
       const auto& source_row = track_rows[row];
       const auto chars = rimes::practice::materials::Characters(source_row.text);
       for (std::size_t i = 0; i < chars.size(); ++i) {
         const auto index = source_row.start + i;
         const int state = last_states.is_array() && index < last_states.size() ? last_states[index].get<int>() : 0;
         SetTextColor(dc, ui::ToColorRef(state == 1 ? Palette().accent_text : state >= 2 ? Palette().danger_text : Palette().text_secondary));
-        RECT cell{Px(12 + (source_row.indent + static_cast<int>(i)) * 28), y, Px(12 + (source_row.indent + static_cast<int>(i) + 1) * 28), y + Px(28)};
-        FrameRect(dc, &cell, grid); auto typed_cell = cell; OffsetRect(&typed_cell, 0, Px(32)); FrameRect(dc, &typed_cell, grid);
+        RECT cell{track_left + Px((source_row.indent + static_cast<int>(i)) * 28), y, track_left + Px((source_row.indent + static_cast<int>(i) + 1) * 28), y + Px(32)};
+        if (state) ui::FillRectColor(dc, cell, ui::ToColorRef(ui::Blend(Palette().surface, state == 1 ? Palette().accent : Palette().danger_text, .14f)));
         const auto text = Wide(chars[i]); DrawTextW(dc, text.c_str(), static_cast<int>(text.size()), &cell, DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
       }
+      if (grid_visible) {
+        const auto columns = source_row.indent + static_cast<int>(source_row.length);
+        for (int col = 0; col <= columns; ++col) {
+          const auto x = track_left + Px(col * 28);
+          MoveToEx(dc, x, y, nullptr); LineTo(dc, x, y + Px(60));
+        }
+        for (int offset : {0, 32, 60}) {
+          MoveToEx(dc, track_left, y + Px(offset), nullptr);
+          LineTo(dc, track_left + Px(columns * 28), y + Px(offset));
+        }
+      }
     }
-    DeleteObject(grid); SelectObject(dc, old);
+    // Native caret/marked text retain TSF ownership; highlight the next committed cell.
+    const auto count = service->Practice().value("metrics", Json::object()).value("committed", 0);
+    for (std::size_t row = 0; row < track_rows.size(); ++row) {
+      const auto& r = track_rows[row];
+      if (count < r.start || count >= r.start + r.length) continue;
+      const auto column = r.indent + count - static_cast<int>(r.start);
+      RECT cell{track_left + Px(column * 28 + 1), Px(43 + static_cast<int>(row) * 76) - scroll_pos.y,
+                track_left + Px((column + 1) * 28 - 1), Px(69 + static_cast<int>(row) * 76) - scroll_pos.y};
+      auto accent = CreateSolidBrush(ui::ToColorRef(Palette().accent)); FrameRect(dc, &cell, accent); DeleteObject(accent);
+      break;
+    }
+    SelectObject(dc, old_pen); DeleteObject(grid); SelectObject(dc, old);
   }
   void LoadMaterials(const std::filesystem::path& path = {}, const std::string& remove = {}) {
     if (material_task) { status = L"素材正在处理，请稍后…"; return; }
     auto job = material_task = std::make_shared<MaterialTask>();
+    if (controls.contains(7007)) EnableWindow(controls[7007], FALSE);
+    if (controls.contains(7008)) EnableWindow(controls[7008], FALSE);
     const auto storage = service->MaterialRoot();
     std::thread([job, storage, path, remove] {
       try {
@@ -381,14 +479,21 @@ struct ExtensionPages::Impl {
   void AdoptMaterials() {
     if (!material_task || !material_task->done.load(std::memory_order_acquire) || service->Armed()) return;
     auto job = std::exchange(material_task, {});
+    if (controls.contains(7007)) EnableWindow(controls[7007], TRUE);
+    if (controls.contains(7008)) EnableWindow(controls[7008], !selected_book.empty());
     if (!job->error.empty()) { status = L"文库：" + job->error; InvalidateRect(hwnd, nullptr, FALSE); return; }
     const bool changed = articles.size() != job->articles.size() || books != job->books ||
         !std::equal(articles.begin(), articles.end(), job->articles.begin(), job->articles.end(), [](const auto& a, const auto& b) {
           return a.id == b.id && a.version == b.version && a.text == b.text && a.display_text == b.display_text;
         });
     if (!changed) return;
-    const auto selected = articles.at(article).id;
+    auto selected = articles.at(article).id;
+    if (articles.size() == metrics::Articles().size())
+      selected = service->PracticePreferences().value("lastArticleID", selected);
     articles = std::move(job->articles); books = std::move(job->books);
+    if (!selected_book.empty() && std::none_of(books.begin(), books.end(), [&](const auto& book) {
+          return book.value("id", std::string()) == selected_book;
+        })) selected_book.clear();
     article = 0;
     for (std::size_t i = 0; i < articles.size(); ++i)
       if (articles[i].id == selected) { article = static_cast<int>(i); break; }
@@ -407,25 +512,36 @@ struct ExtensionPages::Impl {
   }
   void Materials(float w) {
     Button(7006, materials_visible ? L"收起素材" : L"素材");
-    Put(7006, w - 105, 42, 105, 28);
-    if (!materials_visible || sub) return;
+    Put(7006, w - 96, 0, 96, 28);
+    if (!materials_visible) return;
     Button(7009, books_tab ? L"文章" : L"文章 ✓");
     Button(7012, books_tab ? L"书籍 ✓" : L"书籍");
     Button(7007, L"导入 EPUB…"); Button(7008, L"移除本书…");
-    const auto x = w - 220;
-    Put(7009, x, 200, 104, 28); Put(7012, x + 112, 200, 108, 28);
-    auto list = Make(7014, L"LISTBOX", L"素材文章列表", LBS_NOTIFY | LBS_NOINTEGRALHEIGHT | WS_VSCROLL);
+    const auto x = w - 224;
+    Put(7009, x, 42, 108, 28); Put(7012, x + 116, 42, 108, 28);
+    auto list = Make(7014, L"LISTBOX", L"文章和书籍素材", LBS_NOTIFY | LBS_OWNERDRAWFIXED | LBS_HASSTRINGS | LBS_NOINTEGRALHEIGHT | WS_VSCROLL);
+    SendMessageW(list, LB_SETITEMHEIGHT, 0, Px(64));
     SendMessageW(list, LB_RESETCONTENT, 0, 0);
+    if (books_tab && selected_book.empty()) {
+      for (std::size_t i = 0; i < books.size(); ++i) {
+        const auto n = SendMessageW(list, LB_ADDSTRING, 0, reinterpret_cast<LPARAM>(Wide(books[i].value("title", std::string("未命名书籍"))).c_str()));
+        if (n >= 0) SendMessageW(list, LB_SETITEMDATA, n, -2 - static_cast<LPARAM>(i));
+      }
+    }
     for (std::size_t i = 0; i < articles.size(); ++i) {
       const bool imported = articles[i].id.rfind("epub.", 0) == 0;
-      if (imported != books_tab) continue;
+      if (imported != books_tab || (books_tab && (selected_book.empty() || articles[i].id.rfind("epub." + selected_book + ".", 0) != 0))) continue;
       auto n = SendMessageW(list, LB_ADDSTRING, 0, reinterpret_cast<LPARAM>(Wide(articles[i].title).c_str()));
       if (n >= 0) { SendMessageW(list, LB_SETITEMDATA, n, static_cast<LPARAM>(i));
         if (i == static_cast<std::size_t>(article)) SendMessageW(list, LB_SETCURSEL, n, 0); }
     }
-    Put(7014, x, 236, 220, 270); Put(7007, x, 514, 220, 28); Put(7008, x, 550, 220, 28);
+    const float list_top = books_tab && !selected_book.empty() ? 116 : 80;
+    if (list_top > 80) { Button(7017, L"‹ 返回书架"); Put(7017, x, 80, 224, 28); }
+    Put(7014, x, list_top, 224, std::max(40.0f, height - list_top - 84));
+    Put(7007, x, height - 74.0f, 224, 28);
+    if (books_tab && !selected_book.empty()) Put(7008, x, height - 38.0f, 224, 28);
     EnableWindow(controls[7007], !material_task && !service->Armed());
-    EnableWindow(controls[7008], !material_task && !service->Armed() && articles[article].id.rfind("epub.", 0) == 0);
+    EnableWindow(controls[7008], !material_task && !service->Armed() && !selected_book.empty());
   }
   bool PracticePage() const {
     return page == ui::SettingsPage::kTyping ||
@@ -441,6 +557,8 @@ struct ExtensionPages::Impl {
         continue;
       }
       auto r = Rect(positions[id]);
+      if (PracticePage() && materials_visible && (id == 7006 || id == 7007 || id == 7008 || id == 7009 || id == 7012 || id == 7014 || id == 7017))
+        OffsetRect(&r, 0, Px(scroll)); // The material column belongs to the viewport.
       SetWindowPos(h, nullptr, r.left, r.top, r.right - r.left,
                    r.bottom - r.top,
                    SWP_NOACTIVATE | SWP_NOZORDER | SWP_SHOWWINDOW);
@@ -504,6 +622,8 @@ struct ExtensionPages::Impl {
   void Reveal(HWND control) {
     const int id = GetDlgCtrlID(control);
     if (!positions.contains(id)) return;
+    if (id == 7004) { RevealCaret(); return; }
+    if (PracticePage() && materials_visible && (id == 7006 || id == 7007 || id == 7008 || id == 7009 || id == 7012 || id == 7014 || id == 7017)) return;
     const auto r = positions[id];
     const float bottom = (id == 7000 || id == 7010) ? r.top + 30 : r.bottom;
     if (bottom > scroll + height)
@@ -516,11 +636,42 @@ struct ExtensionPages::Impl {
   static LRESULT CALLBACK FocusProc(HWND h, UINT msg, WPARAM w, LPARAM l,
                                     UINT_PTR id, DWORD_PTR ref) {
     auto* self = reinterpret_cast<Impl*>(ref);
+    const auto control = GetDlgCtrlID(h);
+    if (control == 7014 && (msg == WM_LBUTTONDOWN || msg == WM_LBUTTONDBLCLK)) {
+      const auto hit = SendMessageW(h, LB_ITEMFROMPOINT, 0, l);
+      if (!HIWORD(hit)) {
+        SendMessageW(h, LB_SETCURSEL, LOWORD(hit), 0);
+        self->Command(7014, LBN_SELCHANGE);
+      }
+      return 0;
+    }
+    if (control == 7014 && msg == WM_LBUTTONUP) return 0;
+    if (control == 7006 || control == 7015 || control == 7016 || control == 7002 ||
+        control == 7009 || control == 7012 || control == 7017) {
+      // Display controls do not become the input target. In particular an
+      // active composition must survive a click on grid/monitor/collapse.
+      if (msg == WM_LBUTTONDOWN || msg == WM_LBUTTONDBLCLK) {
+        SetCapture(h); SendMessageW(h, BM_SETSTATE, TRUE, 0); return 0;
+      }
+      if (msg == WM_LBUTTONUP && GetCapture() == h) {
+        ReleaseCapture(); SendMessageW(h, BM_SETSTATE, FALSE, 0);
+        RECT r{}; GetClientRect(h, &r);
+        if (PtInRect(&r, {static_cast<short>(LOWORD(l)), static_cast<short>(HIWORD(l))}))
+          self->Command(control, BN_CLICKED);
+        return 0;
+      }
+      if (msg == WM_CAPTURECHANGED || msg == WM_CANCELMODE)
+        SendMessageW(h, BM_SETSTATE, FALSE, 0);
+    }
     if (msg == WM_NCDESTROY) RemoveWindowSubclass(h, FocusProc, id);
     if (msg == WM_SETFOCUS) self->Reveal(h);
     return DefSubclassProc(h, msg, w, l);
   }
   void Colors() {
+    // Applying SCF_ALL during a TSF edit can replace the IME's marked attributes.
+    // Keep the native text store untouched until the composition completes.
+    if (ComposingEditor()) { colors_pending = true; return; }
+    colors_pending = false;
     fonts.Ensure(dpi);
     if (background) DeleteObject(background);
     if (surface) DeleteObject(surface);
@@ -548,6 +699,7 @@ struct ExtensionPages::Impl {
                      reinterpret_cast<LPARAM>(&f));
       }
     last_states = Json();
+    formatted_dpi = 0;
   }
   void Build() {
     positions.clear();
@@ -559,46 +711,57 @@ struct ExtensionPages::Impl {
       Gallery();
     } else if (PracticePage()) {
       Materials(w);
-      const float practice_w = w - (materials_visible && !sub ? 238.0f : 0.0f);
+      practice_width = w - (materials_visible ? 242.0f : 0.0f);
+      const float practice_w = practice_width;
       auto picker = Combo(7000);
       if (SendMessageW(picker, CB_GETCOUNT, 0, 0) == 0)
         for (const auto& a : articles)
           SendMessageW(picker, CB_ADDSTRING, 0,
                        reinterpret_cast<LPARAM>(Wide(a.title).c_str()));
       SendMessageW(picker, CB_SETCURSEL, article, 0);
-      Put(7000, 0, 0, w - 250, 300);
+      // The article picker is needed for historical comparisons. In practice
+      // the selected title is the heading and selection lives in the material column.
+      if (sub) Put(7000, 0, 0, practice_w - 130, 300);
       if (!sub) {
         Button(7001, L"开始跟打");
         Button(7002, L"结束");
         Button(7005, L"随机");
-        Put(7005, w - 240, 0, 60, 30);
-        Put(7001, w - 170, 0, 100, 30);
-        Put(7002, w - 60, 0, 60, 30);
+        Button(7015, grid_visible ? L"隐藏格线" : L"显示格线");
+        Button(7016, cells_visible ? L"收起监控" : L"实时监控");
+        const auto actions_right = practice_w - (materials_visible ? 0 : 104);
+        Put(7005, actions_right - 268, 0, 52, 30);
+        Put(7001, actions_right - 208, 0, 84, 30);
+        Put(7002, actions_right - 116, 0, 48, 30);
+        Put(7016, actions_right - 64, 0, 64, 30);
         target = Make(7003, MSFTEDIT_CLASS, L"",
                       ES_MULTILINE | ES_READONLY | WS_VSCROLL);
         editor =
             Make(7004, MSFTEDIT_CLASS, L"",
-                 ES_MULTILINE | ES_WANTRETURN | ES_NOOLEDRAGDROP | WS_VSCROLL);
-        SendMessageW(editor, EM_SETEVENTMASK, 0, ENM_CHANGE | ENM_SELCHANGE);
-        SendMessageW(editor, EM_EXLIMITTEXT, 0, 16384);
-        SendMessageW(editor, EM_SETUNDOLIMIT, 0, 0);
-        SendMessageW(editor, EM_SETREADONLY, !service->Armed(), 0);
+                 ES_MULTILINE | ES_WANTRETURN | ES_NOOLEDRAGDROP);
+        if (!ComposingEditor()) {
+          SendMessageW(editor, EM_SETEVENTMASK, 0, ENM_CHANGE | ENM_SELCHANGE);
+          SendMessageW(editor, EM_EXLIMITTEXT, 0, 16384);
+          SendMessageW(editor, EM_SETUNDOLIMIT, 0, 0);
+          SendMessageW(editor, EM_SETREADONLY, !service->Armed(), 0);
+        }
         EnableWindow(controls[7002], service->Armed());
         DragAcceptFiles(editor, FALSE);
         SetWindowSubclass(editor, EditorProc, 1,
                           reinterpret_cast<DWORD_PTR>(this));
-        Put(7004, 0, 200, practice_w, 378);
-        RECT inset{Px(12), Px(10), Px(practice_w - 28), Px(178)};
-        SendMessageW(editor, EM_SETRECT, 0, reinterpret_cast<LPARAM>(&inset));
-        total = 930;
+        track_top = cells_visible ? 268.0f : 122.0f;
+        Put(7015, practice_w - 90, track_top - 32, 90, 26);
+        const auto rows = rimes::practice::materials::TrackRows(articles[article].display_text.empty() ? articles[article].text : articles[article].display_text,
+            std::max(6, static_cast<int>((practice_w - 24) / 28)), articles[article].language == "chinese" ? 2 : 0);
+        Put(7004, 0, track_top, practice_w, 66.0f + static_cast<float>(rows.size()) * 76);
+        total = static_cast<int>(positions[7004].bottom + 30);
         suppress = true;
         SetWindowTextW(target, Wide(articles[article].text).c_str());
         suppress = false;
       } else {
         auto contexts = Combo(7010);
-        Put(7010, 0, 44, w, 250);
+        Put(7010, 0, 44, practice_w, 250);
         Button(7011, L"清空成绩…");
-        Put(7011, w - 120, 0, 120, 30);
+        Put(7011, practice_w - 120, 0, 120, 30);
         PopulateHistory(contexts);
         total = 500 + static_cast<int>(results.size()) * 66;
       }
@@ -697,7 +860,7 @@ struct ExtensionPages::Impl {
         results.push_back(*it);
     for (std::size_t i = 0; i < results.size(); ++i) {
       Button(7300 + static_cast<int>(i), L"详情");
-      Put(7300 + static_cast<int>(i), static_cast<float>(width - 94),
+      Put(7300 + static_cast<int>(i), practice_width - 76,
           440 + static_cast<float>(i) * 66, 70, 28);
     }
   }
@@ -745,6 +908,7 @@ struct ExtensionPages::Impl {
   }
   void Start() {
     Stop("interrupted");
+    ++practice_generation;
     suppress = true;
     SetWindowTextW(editor, L"");
     suppress = false;
@@ -766,8 +930,10 @@ struct ExtensionPages::Impl {
         Hash(context.dump() + ":" +
              std::to_string(articles[article].version));
     service->Arm(editor, articles[article], context);
+    ime_composing = false;
     SendMessageW(editor, EM_SETREADONLY, FALSE, 0);
     SetFocus(editor);
+    LayoutTrack();
     was_armed = true;
     status = service->Practice()["context"].value("repeatArticle", false)
                  ? L"同篇重练 · 从第一个字开始"
@@ -776,6 +942,8 @@ struct ExtensionPages::Impl {
     EnableWindow(controls[7002], TRUE);
     EnableWindow(controls[7000], FALSE);
     EnableWindow(controls[7005], FALSE);
+    if (controls.contains(7007)) EnableWindow(controls[7007], FALSE);
+    if (controls.contains(7008)) EnableWindow(controls[7008], FALSE);
     last_states = Json();
   }
   void Stop(const std::string& reason) {
@@ -807,10 +975,11 @@ struct ExtensionPages::Impl {
   }
   void Publish() {
     if (suppress || !editor || !service->Armed()) return;
-    if (Composing(editor)) {
+    if (ComposingEditor()) {
       service->Composition();
       return;
     }
+    if (colors_pending) Colors();
     const auto text = Text(editor);
     // A surrogate pair may arrive in two WM_CHAR messages. Wait for the
     // complete UTF-16 value instead of admitting a replacement character.
@@ -825,6 +994,10 @@ struct ExtensionPages::Impl {
   }
   void Refresh() {
     if (!visible) return;
+    if (colors_pending && !ComposingEditor()) {
+      Colors();
+      if (PracticePage() && !sub) LayoutTrack();
+    }
     AdoptMaterials();
     if (page == ui::SettingsPage::kPlugins && cb.plugins) {
       auto current = cb.plugins();
@@ -864,6 +1037,8 @@ struct ExtensionPages::Impl {
         EnableWindow(controls[7002], FALSE);
         EnableWindow(controls[7000], TRUE);
         EnableWindow(controls[7005], TRUE);
+        if (controls.contains(7007)) EnableWindow(controls[7007], !material_task);
+        if (controls.contains(7008)) EnableWindow(controls[7008], !material_task && !selected_book.empty());
         if (snapshot.value("finished", false))
           status =
               snapshot.value("complete", false) && snapshot["reasons"].empty()
@@ -882,8 +1057,7 @@ struct ExtensionPages::Impl {
         last_practice_status = status;
         // Keep the article and RichEdit input out of periodic metric updates.
         // Scrolling/layout changes still invalidate the entire page separately.
-        for (const auto& area : {ui::DipRect{0, 66, static_cast<float>(width - 18), 198},
-                                 ui::DipRect{0, 540, static_cast<float>(width - 18), 850}}) {
+        for (const auto& area : {ui::DipRect{0, 48, practice_width, track_top - 37}}) {
           const auto rect = Rect(area);
           InvalidateRect(hwnd, &rect, FALSE);
         }
@@ -954,7 +1128,7 @@ struct ExtensionPages::Impl {
   }
   void MetricCards(HDC dc, float y, const std::array<std::wstring, 4>& titles,
                    const std::array<std::wstring, 4>& values) {
-    const float w = (width - 18 - 30) / 4.0f;
+    const float w = ((PracticePage() ? practice_width : static_cast<float>(width - 18)) - 30) / 4.0f;
     for (int i = 0; i < 4; ++i) {
       const float x = i * (w + 10);
       Box(dc, {x, y, x + w, y + 72});
@@ -966,10 +1140,10 @@ struct ExtensionPages::Impl {
   }
   void Chart(HDC dc, float y, float h,
              const std::vector<std::optional<double>>& values,
-             const std::wstring& title) {
-    const float w = static_cast<float>(width - 18);
-    Box(dc, {0, y, w, y + h});
-    Label(dc, title, {14, y + 10, w - 14, y + 32}, fonts.body,
+             const std::wstring& title, float left = 0, float chart_width = 0) {
+    const float w = chart_width > 0 ? chart_width : PracticePage() ? practice_width : static_cast<float>(width - 18);
+    Box(dc, {left, y, left + w, y + h});
+    Label(dc, title, {left + 14, y + 10, left + w - 14, y + 32}, fonts.body,
           Palette().text_secondary);
     double max = 1;
     for (const auto& n : values)
@@ -982,7 +1156,7 @@ struct ExtensionPages::Impl {
         any = false;
         continue;
       }
-      const auto x = Px(18 + (w - 36) * (values.size() > 1
+      const auto x = Px(left + 18 + (w - 36) * (values.size() > 1
                                              ? static_cast<float>(i) /
                                                    (values.size() - 1)
                                              : 0.5f)),
@@ -1001,11 +1175,11 @@ struct ExtensionPages::Impl {
     if (values.empty() ||
         std::none_of(values.begin(), values.end(),
                      [](const auto& v) { return v.has_value(); }))
-      Label(dc, L"暂无记录", {0, y + 50, w, y + h - 12}, fonts.body,
+      Label(dc, L"开始输入后显示速度轨迹", {left + 8, y + 50, left + w - 8, y + h - 12}, fonts.family,
             Palette().text_muted, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
-    Label(dc, L"0", {10, y + h - 22, 50, y + h - 4}, fonts.family,
+    Label(dc, L"0", {left + 10, y + h - 22, left + 50, y + h - 4}, fonts.family,
           Palette().text_muted);
-    Label(dc, Number(max, 0), {w - 65, y + 12, w - 12, y + 32}, fonts.family,
+    Label(dc, Number(max, 0), {left + w - 65, y + 12, left + w - 12, y + 32}, fonts.family,
           Palette().text_muted, DT_RIGHT | DT_SINGLELINE);
   }
   void Keyboard(HDC dc, float y, const Json& counts) {
@@ -1123,7 +1297,7 @@ struct ExtensionPages::Impl {
     FillRect(dc, &client, background);
     SetBkMode(dc, TRANSPARENT);
     const auto& p = Palette();
-    const float w = static_cast<float>(width - 18);
+    const float w = PracticePage() ? practice_width : static_cast<float>(width - 18);
     if (page == ui::SettingsPage::kPlugins) {
       for (const auto& [y, name] : sections)
         Label(dc, name,
@@ -1163,47 +1337,51 @@ struct ExtensionPages::Impl {
         const auto snapshot = service->Practice();
         const auto m = snapshot.value("metrics", Json::object());
         const bool english = a.language == "english";
-        Label(dc,
-              Wide(a.theme + " · " + a.difficulty) + L" · " +
-                  std::to_wstring(metrics::Characters(a.text).size()) +
-                  L" 字符 · v" + std::to_wstring(a.version),
-              {0, 42, w, 60}, fonts.family, p.text_muted);
-        Label(dc, status, {0, 66, w, 89}, fonts.body, p.text_secondary);
-        MetricCards(dc, 96, {L"有效速度", L"击键", L"回退", L"过程正确率"},
-                    {m.empty() ? L"—"
-                               : Number(m.value("effectiveCPM", 0.0) /
-                                        (english ? 5 : 1)) +
-                                     (english ? L" WPM" : L" 字/分"),
-                     std::to_wstring(m.value("keys", 0)),
-                     std::to_wstring(m.value("backspaces", 0)),
-                     Percent(m.value("processAccuracy", Json()))});
-        const float progress =
-            m.value("expected", 0) > 0
-                ? static_cast<float>((m.value("correct", 0.0) +
-                                      m.value("substitutions", 0.0) +
-                                      m.value("omissions", 0.0)) /
-                                     m["expected"].get<double>())
-                : 0;
-        ui::FillRoundRect(dc, Rect({0, 180, w - 115, 185}), Px(3),
-                          ui::ToColorRef(p.border));
-        if (progress > 0)
-          ui::FillRoundRect(dc, Rect({0, 180, (w - 115) * progress, 185}),
-                            Px(3), ui::ToColorRef(p.accent));
-        Label(dc,
-              Number(progress * 100, 0) + L"%   " +
-                  Duration(m.value("elapsed", 0.0)),
-              {w - 105, 174, w, 197}, fonts.family, p.text_muted);
-        Label(dc, L"输入区 · 组字中的编码不计分", {0, 366, w, 386},
-              fonts.family, p.text_muted);
-        std::vector<std::optional<double>> samples;
-        for (const auto& s : m.value("samples", Json::array()))
-          samples.push_back(s[1].get<double>() / (english ? 5 : 1));
-        Chart(dc, 540, 145, samples, L"有效速度曲线");
-        Label(dc, Detail(m), {0, 706, w, 850}, fonts.body, p.text_secondary);
-        Label(dc,
-              L"从首次输入计时。失焦、切换方案或提前结束记为练习。\n仅保存汇总"
-              L"成绩，不保存跟打正文；粘贴与拖入不可用于测速。",
-              {0, 865, w, 925}, fonts.family, p.text_muted);
+        const auto w = practice_width;
+        const auto heading_right = std::max(90.0f, w - (materials_visible ? 278 : 382));
+        Label(dc, Wide(a.title), {0, 0, heading_right, 25}, fonts.title,
+              p.text_primary, DT_SINGLELINE | DT_END_ELLIPSIS | DT_NOPREFIX);
+        Label(dc, Wide(a.theme + " · " + a.difficulty) + L" · " +
+                  std::to_wstring(metrics::Characters(a.text).size()) + L" 字符",
+              {0, 30, w, 47}, fonts.family, p.text_muted, DT_SINGLELINE | DT_END_ELLIPSIS);
+        if (cells_visible) {
+          const std::array<std::wstring, 4> titles{L"有效速度", L"击键", L"回退", L"正确率"};
+          const std::array<std::wstring, 4> values{
+              m.empty() ? L"—" : Number(m.value("effectiveCPM", 0.0) / (english ? 5 : 1)) + (english ? L" WPM" : L" 字/分"),
+              std::to_wstring(m.value("keys", 0)) + L" 键",
+              std::to_wstring(m.value("backspaces", 0)), Percent(m.value("processAccuracy", Json()))};
+          const auto elapsed = m.value("elapsed", 0.0);
+          const auto committed = m.value("committed", 0.0);
+          const auto chord = m.value("chords", Json());
+          const std::array<std::wstring, 4> details{
+              L"原始 " + Number(m.value("rawCPM", 0.0) / (english ? 5 : 1)) + (english ? L" WPM" : L" 字/分"),
+              Number(elapsed > 0 ? m.value("keys", 0.0) / elapsed : 0.0) + L" 键/秒 · " +
+                  (chord.is_number() ? std::to_wstring(chord.get<int>()) + L" 拍" : L"拍数 —") + L" · 码长 " +
+                  (committed > 0 ? Number(m.value("keys", 0.0) / committed) : L"—"),
+              L"组字 " + std::to_wstring(m.value("compositionBackspaces", 0)) + L" · 成文 " + std::to_wstring(m.value("committedBackspaces", 0)),
+              L"最终 " + Percent(m.value("finalAccuracy", Json()))};
+          const float tile_width = (w / 2 - 12) / 2;
+          for (int i = 0; i < 4; ++i) {
+            const auto x = (i % 2) * (tile_width + 8), y = 52.0f + (i / 2) * 72;
+            Box(dc, {x, y, x + tile_width, y + 64});
+            Label(dc, titles[i], {x + 10, y + 5, x + tile_width - 8, y + 20}, fonts.family, p.text_secondary);
+            Label(dc, values[i], {x + 10, y + 22, x + tile_width - 8, y + 42}, fonts.body, p.text_primary, DT_SINGLELINE | DT_END_ELLIPSIS);
+            Label(dc, details[i], {x + 10, y + 44, x + tile_width - 8, y + 60}, fonts.family, p.text_muted, DT_SINGLELINE | DT_END_ELLIPSIS | DT_NOPREFIX);
+          }
+          std::vector<std::optional<double>> samples;
+          for (const auto& s : m.value("samples", Json::array())) samples.push_back(s[1].get<double>() / (english ? 5 : 1));
+          Chart(dc, 52, 136, samples, L"速度轨迹", w / 2 + 4, w / 2 - 4);
+        }
+        const float status_y = track_top - 66;
+        Label(dc, status, {0, status_y, w - 180, status_y + 24}, fonts.family, p.text_secondary, DT_SINGLELINE | DT_END_ELLIPSIS);
+        const auto progress = m.value("expected", 0) > 0 ? std::clamp(
+            static_cast<float>((m.value("correct", 0.0) + m.value("substitutions", 0.0) + m.value("omissions", 0.0)) / m["expected"].get<double>()), 0.0f, 1.0f) : 0;
+        ui::FillRoundRect(dc, Rect({w - 174, status_y + 8, w - 94, status_y + 13}), Px(3), ui::ToColorRef(p.border));
+        if (progress > 0) ui::FillRoundRect(dc, Rect({w - 174, status_y + 8, w - 174 + 80 * progress, status_y + 13}), Px(3), ui::ToColorRef(p.accent));
+        Label(dc, Number(progress * 100, 0) + L"%  " + Duration(m.value("elapsed", 0.0)),
+              {w - 88, status_y, w, status_y + 24}, fonts.family, p.text_secondary, DT_SINGLELINE | DT_RIGHT);
+        Box(dc, {0, track_top - 36, w, positions.at(7004).bottom + 8});
+        Label(dc, L"原文在上 · 输入在下 · 组字不判分", {12, track_top - 27, w - 100, track_top - 6}, fonts.family, p.text_muted, DT_SINGLELINE | DT_END_ELLIPSIS);
       } else {
         const auto count = results.size();
         std::vector<std::optional<double>> curve;
@@ -1401,8 +1579,12 @@ struct ExtensionPages::Impl {
       if (notification == LBN_SELCHANGE) {
         const auto n = SendMessageW(controls[id], LB_GETCURSEL, 0, 0);
         const auto selected = n < 0 ? -1 : SendMessageW(controls[id], LB_GETITEMDATA, n, 0);
-        if (selected >= 0 && selected < static_cast<LRESULT>(articles.size())) {
-          ResetArticle(); article = static_cast<int>(selected); Build();
+        if (selected <= -2 && -(selected + 2) < static_cast<LRESULT>(books.size())) {
+          selected_book = books[static_cast<std::size_t>(-(selected + 2))].at("id").get<std::string>();
+          Build(); return;
+        }
+        if (selected >= 0 && selected < static_cast<LRESULT>(articles.size()) && selected != article) {
+          ResetArticle(); article = static_cast<int>(selected); RememberView(); Build();
         }
       }
       return;
@@ -1416,6 +1598,7 @@ struct ExtensionPages::Impl {
       ResetArticle();
       article =
           static_cast<int>(SendMessageW(controls[id], CB_GETCURSEL, 0, 0));
+      RememberView();
       status = L"选择文章后开始跟打";
       if (editor) {
         suppress = true;
@@ -1424,19 +1607,27 @@ struct ExtensionPages::Impl {
       }
       Build();
     }
-    if (id == 7006) { materials_visible = !materials_visible; Build(); }
-    if (id == 7009 || id == 7012) { books_tab = id == 7012; Build(); }
+    if (id == 7006 || id == 7015 || id == 7016) {
+      if (id == 7006) materials_visible = !materials_visible;
+      if (id == 7015) grid_visible = !grid_visible;
+      if (id == 7016) cells_visible = !cells_visible;
+      RememberView(); Build();
+      if (service->Armed() && GetFocus() != editor) SetFocus(editor);
+      return;
+    }
+    if (id == 7009 || id == 7012) { books_tab = id == 7012; selected_book.clear(); Build(); }
+    if (id == 7017) { selected_book.clear(); Build(); }
     if (id == 7007) ImportMaterials();
-    if (id == 7008 && !service->Armed() && articles[article].id.rfind("epub.", 0) == 0) {
+    if (id == 7008 && !service->Armed() && !selected_book.empty()) {
       if (MessageBoxW(parent, L"移除本书的跟打素材？已保存的成绩会保留。", L"移除书籍", MB_YESNO | MB_ICONQUESTION) == IDYES)
-        LoadMaterials({}, articles[article].id.substr(5, 16));
+        LoadMaterials({}, selected_book);
     }
     if (id == 7001) {
       Start();
       Refresh();
     }
     if (id == 7002) {
-      if (Composing(editor)) {
+      if (ComposingEditor()) {
         status = L"请先确认或取消当前组字，再结束";
         SetFocus(editor);
       } else
@@ -1445,9 +1636,15 @@ struct ExtensionPages::Impl {
     }
     if (id == 7005) {
       ResetArticle();
-      article = (article + 1 +
-                 std::random_device{}() % (articles.size() - 1)) %
-                articles.size();
+      std::vector<int> choices;
+      const auto current_book = articles[article].id.rfind("epub.", 0) == 0 ? articles[article].id.substr(5, 16) : "";
+      for (std::size_t i = 0; i < articles.size(); ++i) {
+        const bool in_pool = current_book.empty() ? articles[i].id.rfind("epub.", 0) != 0
+            : articles[i].id.rfind("epub." + current_book + ".", 0) == 0;
+        if (in_pool && i != article) choices.push_back(static_cast<int>(i));
+      }
+      if (!choices.empty()) article = choices[std::random_device{}() % choices.size()];
+      RememberView();
       Build();
     }
     if (id == 7010 && notification == CBN_SELCHANGE) {
@@ -1589,6 +1786,58 @@ struct ExtensionPages::Impl {
     }
     if (msg == WM_GETDLGCODE)
       return DLGC_WANTALLKEYS | DLGC_WANTCHARS | DLGC_WANTARROWS | DLGC_WANTTAB;
+    if (msg == WM_ERASEBKGND) return 1;
+    if (msg == WM_PAINT || msg == WM_PRINTCLIENT || msg == WM_PRINT) {
+      PAINTSTRUCT paint{};
+      auto destination = msg == WM_PAINT ? BeginPaint(h, &paint) : reinterpret_cast<HDC>(w);
+      if (!destination) return 0;
+      RECT r{}; GetClientRect(h, &r);
+      RECT visible = r;
+      if (msg == WM_PAINT) {
+        RECT clip{};
+        if (GetClipBox(destination, &clip) != ERROR) IntersectRect(&visible, &r, &clip);
+      }
+      if (IsRectEmpty(&visible)) {
+        if (msg == WM_PAINT) EndPaint(h, &paint);
+        return 0;
+      }
+      // The document can be thousands of pixels high. Allocate only the dirty
+      // viewport band instead of a full-document bitmap for every key/caret.
+      const auto frame = CreateCompatibleDC(destination);
+      const auto bitmap = frame ? CreateCompatibleBitmap(destination, std::max(1L, r.right), std::max(1L, visible.bottom - visible.top)) : nullptr;
+      if (bitmap) {
+        const auto old = SelectObject(frame, bitmap);
+        SetViewportOrgEx(frame, 0, -visible.top, nullptr);
+        // RichEdit supplies native text, marked text, selection and TSF geometry.
+        // Draw its frame and both tracks together, then present only once.
+        DefSubclassProc(h, WM_PRINTCLIENT, reinterpret_cast<WPARAM>(frame), PRF_CLIENT | PRF_ERASEBKGND);
+        self->PaintTrack(h, frame);
+        BitBlt(destination, 0, visible.top, r.right, visible.bottom - visible.top, frame, 0, visible.top, SRCCOPY);
+        SelectObject(frame, old); DeleteObject(bitmap);
+      } else {
+        DefSubclassProc(h, WM_PRINTCLIENT, reinterpret_cast<WPARAM>(destination), PRF_CLIENT | PRF_ERASEBKGND);
+        self->PaintTrack(h, destination);
+      }
+      if (frame) DeleteDC(frame);
+      if (msg == WM_PAINT) EndPaint(h, &paint);
+      return 0;
+    }
+    if (msg == WM_CHAR && (w == '\r' || w == '\n') && !self->ComposingEditor()) return 0;
+    // Paragraph separators are layout, not a second deletion step. Backspace
+    // at the first cell removes the preceding real character with its separator.
+    if (msg == WM_CHAR && w == '\b' && !self->ComposingEditor() && self->service->Armed()) {
+      CHARRANGE range{}; SendMessageW(h, EM_EXGETSEL, 0, reinterpret_cast<LPARAM>(&range));
+      const auto text = Text(h);
+      if (range.cpMin == range.cpMax && range.cpMin > 0 && text[range.cpMin - 1] == '\r') {
+        auto start = range.cpMin - 1;
+        const auto preceding = rimes::practice::materials::Characters(Utf8(text.substr(0, start)));
+        if (!preceding.empty()) start -= static_cast<LONG>(Wide(preceding.back()).size());
+        range.cpMin = start;
+        SendMessageW(h, EM_EXSETSEL, 0, reinterpret_cast<LPARAM>(&range));
+        SendMessageW(h, EM_REPLACESEL, FALSE, reinterpret_cast<LPARAM>(L""));
+        PostMessageW(self->hwnd, WM_APP + 72, 0, 0); return 0;
+      }
+    }
     if (msg == WM_PASTE || msg == WM_DROPFILES || msg == WM_UNDO ||
         (msg == WM_KEYDOWN &&
          ((w == 'V' && (GetKeyState(VK_CONTROL) & 0x8000)) ||
@@ -1610,27 +1859,25 @@ struct ExtensionPages::Impl {
         mods |= static_cast<unsigned>(core::KeyModifiers::kWindows);
       self->service->LocalKey(
           static_cast<unsigned>(w), mods, (l & (1LL << 30)) != 0,
-          static_cast<DWORD>(GetMessageTime()), Composing(h));
+          static_cast<DWORD>(GetMessageTime()), self->ComposingEditor());
+      self->Refresh();
     }
-    if (msg == WM_IME_STARTCOMPOSITION) self->service->Composition();
+    if (msg == WM_IME_STARTCOMPOSITION) { self->ime_composing = true; self->service->Composition(); }
     if (msg == WM_KILLFOCUS && self->service->Armed()) {
       self->service->Mark("focusLost");
-      PostMessageW(self->hwnd, WM_APP + 74, 0, 0);
+      PostMessageW(self->hwnd, WM_APP + 74, self->practice_generation, 0);
     }
     CHARRANGE replaced{};
     std::wstring before;
-    if (msg == WM_CHAR && w >= 32 && self->service->Armed() && !Composing(h)) {
+    if (msg == WM_CHAR && w >= 32 && self->service->Armed() && !self->ComposingEditor()) {
       SendMessageW(h, EM_EXGETSEL, 0, reinterpret_cast<LPARAM>(&replaced));
       if (replaced.cpMin < replaced.cpMax) before = Text(h);
     }
     const auto result = DefSubclassProc(h, msg, w, l);
-    if (msg == WM_PAINT || msg == WM_PRINTCLIENT) {
-      auto dc = msg == WM_PAINT ? GetDC(h) : reinterpret_cast<HDC>(w);
-      self->PaintTrack(h, dc); if (msg == WM_PAINT) ReleaseDC(h, dc);
-    }
+    if (msg == WM_IME_ENDCOMPOSITION) self->ime_composing = false;
     // RichEdit can replace a selection with identical text. A plain text
     // diff cannot see this real attempt/correction, so preserve its range.
-    if (!before.empty() && before == Text(h) && !Composing(h)) {
+    if (!before.empty() && before == Text(h) && !self->ComposingEditor()) {
       const auto prefix =
           metrics::Characters(Utf8(before.substr(0, replaced.cpMin)));
       const auto selection = metrics::Characters(
@@ -1644,6 +1891,7 @@ struct ExtensionPages::Impl {
     }
     if (msg == WM_IME_ENDCOMPOSITION || msg == WM_CHAR)
       PostMessageW(self->hwnd, WM_APP + 72, 0, 0);
+    if (msg == WM_MOUSEWHEEL) { SendMessageW(self->hwnd, msg, w, l); return 0; }
     return result;
   }
   static LRESULT CALLBACK Proc(HWND h, UINT msg, WPARAM w, LPARAM l) {
@@ -1674,8 +1922,10 @@ struct ExtensionPages::Impl {
         self->Publish();
         return 0;
       case WM_APP + 74:
-        self->Stop("focusLost");
-        self->Refresh();
+        if (w == self->practice_generation) {
+          self->Stop("focusLost");
+          self->Refresh();
+        }
         return 0;
       case WM_COMMAND:
         self->Command(LOWORD(w), HIWORD(w));
@@ -1761,6 +2011,37 @@ struct ExtensionPages::Impl {
       }
       case WM_DRAWITEM: {
         auto* item = reinterpret_cast<DRAWITEMSTRUCT*>(l);
+        if (item->CtlType == ODT_LISTBOX && item->CtlID == 7014) {
+          const auto& p = self->Palette();
+          const bool selected = (item->itemState & ODS_SELECTED) != 0;
+          auto r = item->rcItem;
+          ui::FillRectColor(item->hDC, r, ui::ToColorRef(p.settings_background));
+          if (item->itemID == static_cast<UINT>(-1)) return TRUE;
+          InflateRect(&r, -self->Px(2), -self->Px(3));
+          ui::FillRoundRect(item->hDC, r, self->Px(8), ui::ToColorRef(selected ? ui::Blend(p.surface, p.accent, .12f) : p.surface));
+          ui::StrokeRoundRect(item->hDC, r, self->Px(8), ui::ToColorRef(selected ? p.accent : p.border));
+          std::wstring title, detail;
+          const auto index = static_cast<INT_PTR>(item->itemData);
+          if (index <= -2 && -(index + 2) < static_cast<INT_PTR>(self->books.size())) {
+            const auto& book = self->books[static_cast<std::size_t>(-(index + 2))];
+            title = Wide(book.value("title", std::string("未命名书籍")));
+            detail = Wide(book.value("author", std::string())) + L" · 打开章节段落";
+          } else if (index >= 0 && index < static_cast<INT_PTR>(self->articles.size())) {
+            const auto& a = self->articles[static_cast<std::size_t>(index)];
+            const auto dot = a.id.find_last_of('.');
+            title = a.id.rfind("epub.", 0) == 0 ? L"第 " + Wide(a.id.substr(dot + 1)) + L" 段 · " + Wide(a.title) : Wide(a.title);
+            detail = std::to_wstring(metrics::Characters(a.text).size()) + L" 字符 · " + Wide(a.theme);
+          }
+          SetBkMode(item->hDC, TRANSPARENT); SetTextColor(item->hDC, ui::ToColorRef(p.text_primary));
+          SelectObject(item->hDC, self->fonts.body);
+          auto text = r; InflateRect(&text, -self->Px(10), 0); text.top += self->Px(9); text.bottom = text.top + self->Px(20);
+          DrawTextW(item->hDC, title.c_str(), -1, &text, DT_SINGLELINE | DT_END_ELLIPSIS | DT_NOPREFIX);
+          text.top += self->Px(24); text.bottom += self->Px(24);
+          SetTextColor(item->hDC, ui::ToColorRef(p.text_muted)); SelectObject(item->hDC, self->fonts.family);
+          DrawTextW(item->hDC, detail.c_str(), -1, &text, DT_SINGLELINE | DT_END_ELLIPSIS | DT_NOPREFIX);
+          if (item->itemState & ODS_FOCUS) DrawFocusRect(item->hDC, &r);
+          return TRUE;
+        }
         if (item->CtlType != ODT_BUTTON) break;
         const auto& p = self->Palette();
         bool selected = false;

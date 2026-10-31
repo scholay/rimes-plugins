@@ -91,6 +91,11 @@ class Service {
   Json Practice();
   Json Data();
   void Preferences(bool keys, bool activity);
+  // View preferences never contain the transient editor/marked text. Missing
+  // keys in older statistics files inherit these defaults; patches preserve
+  // all other stored fields.
+  Json PracticePreferences();
+  bool SetPracticePreferences(const Json& patch);
   bool Clear(const std::string& kind, const std::string& day = {});
   bool Repair();
   void Save();

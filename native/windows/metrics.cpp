@@ -29,6 +29,25 @@ Json Empty() {
           {"sessions", Json::array()},
           {"results", Json::array()}};
 }
+Json DefaultPracticePreferences() {
+  return {{"materialsCollapsed", false}, {"gridHidden", false},
+          {"cellsHidden", false}, {"lastArticleID", ""}};
+}
+bool ValidPracticePreferences(const Json& value) {
+  if (!value.is_object()) return false;
+  for (const auto key : {"materialsCollapsed", "gridHidden", "cellsHidden"})
+    if (value.contains(key) && !value.at(key).is_boolean()) return false;
+  if (value.contains("lastArticleID")) {
+    const auto& id = value.at("lastArticleID");
+    if (!id.is_string()) return false;
+    const auto& text = id.get_ref<const std::string&>();
+    if (text.size() > 256 || text.find('\0') != std::string::npos ||
+        (!text.empty() && MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS,
+             text.data(), static_cast<int>(text.size()), nullptr, 0) == 0))
+      return false;
+  }
+  return true;
+}
 void Safe(const std::filesystem::path& path) {
   for (auto p = path; !p.empty(); p = p.parent_path()) {
     auto flags = GetFileAttributesW(p.c_str());
@@ -64,14 +83,20 @@ void ValidateNumberTree(const Json& value) {
     for (const auto& child : value) ValidateNumberTree(child);
 }
 void Validate(const Json& j) {
-  if (j.size() != 6) throw std::runtime_error("统计文件含未知字段。");
+  if (!j.is_object()) throw std::runtime_error("统计文件格式无效。");
   if (j.at("version") != 1 || !j.at("recordKeys").is_boolean() ||
       !j.at("recordActivity").is_boolean() || !j.at("days").is_object() ||
       j.at("days").size() > 36600 || !j.at("sessions").is_array() ||
       j.at("sessions").size() > 500 || !j.at("results").is_array() ||
       j.at("results").size() > 500)
     throw std::runtime_error("统计文件格式无效。");
-  ValidateNumberTree(j);
+  // Keep extension fields from newer versions intact. Apply numeric checks
+  // only to the statistics this version understands, not opaque view metadata.
+  for (const auto key : {"days", "sessions", "results"})
+    ValidateNumberTree(j.at(key));
+  if (j.contains("practicePreferences") &&
+      !ValidPracticePreferences(j.at("practicePreferences")))
+    throw std::runtime_error("测速界面设置无效。");
   for (const auto& [day, value] : j.at("days").items()) {
     if (day.size() != 10 || day[4] != '-' || day[7] != '-' ||
         !value.at("keys").is_object())
@@ -295,7 +320,7 @@ void Session::Tick(double now) {
   Sample(false);
 }
 void Session::Key(double now, bool repeat, bool backspace, bool composing) {
-  if (finished_ || !std::isfinite(now) || now < last_) return;
+  if (finished_ || !std::isfinite(now) || now < 0 || now < last_) return;
   Start(now);
   Tick(now);
   Add(metrics_, repeat ? "repeats" : "keys");
@@ -305,14 +330,15 @@ void Session::Key(double now, bool repeat, bool backspace, bool composing) {
   }
 }
 void Session::UpgradeBackspace() {
-  if (metrics_["committedBackspaces"].get<unsigned>()) {
+  if (!finished_ && metrics_["committedBackspaces"].get<unsigned>()) {
     metrics_["committedBackspaces"] =
         metrics_["committedBackspaces"].get<unsigned>() - 1;
     Add(metrics_, "compositionBackspaces");
   }
 }
 void Session::Chord(double now) {
-  if (Started() && !finished_ && !metrics_["chords"].is_null()) {
+  if (Started() && !finished_ && std::isfinite(now) && now >= last_ &&
+      !metrics_["chords"].is_null()) {
     Tick(now);
     Add(metrics_, "chords");
   }
@@ -400,7 +426,7 @@ Session::Alignment Session::Align(const std::vector<std::wstring>& expected,
 bool Session::Reconcile(
     const std::string& text, double now,
     std::optional<std::pair<std::size_t, std::size_t>> insertion) {
-  if (finished_ || !std::isfinite(now) || now < last_ || text.size() > 16384 ||
+  if (finished_ || !std::isfinite(now) || now < 0 || now < last_ || text.size() > 16384 ||
       text.find('\0') != std::string::npos)
     return false;
   auto next = Characters(text);
@@ -523,6 +549,7 @@ std::optional<Json> Session::Finish(double now, double wall) {
 }
 Json Session::Snapshot() const {
   return {{"metrics", metrics_},    {"states", alignment_.states},
+          {"typedCorrectness", alignment_.correct},
           {"started", Started()},   {"finished", finished_},
           {"complete", Complete()}, {"reasons", reasons_},
           {"context", context_}};
@@ -777,6 +804,34 @@ void Service::Preferences(bool keys, bool activity) {
   dirty_ = true;
   lock.unlock();
   Save();
+}
+Json Service::PracticePreferences() {
+  std::lock_guard lock(mutex_);
+  auto value = DefaultPracticePreferences();
+  if (data_.contains("practicePreferences"))
+    value.update(data_.at("practicePreferences"));
+  return value;
+}
+bool Service::SetPracticePreferences(const Json& patch) {
+  if (!ValidPracticePreferences(patch)) return false;
+  // Only these settings are writable by the current UI. Unknown fields read
+  // from a newer file are retained, never deleted by a partial update.
+  const auto defaults = DefaultPracticePreferences();
+  for (const auto& [key, value] : patch.items()) {
+    (void)value;
+    if (!defaults.contains(key)) return false;
+  }
+  std::unique_lock lock(mutex_);
+  if (!issue_.empty()) return false;
+  auto value = data_.value("practicePreferences", Json::object());
+  auto updated = value;
+  updated.update(patch);
+  if (updated == value) return true;
+  data_["practicePreferences"] = std::move(updated);
+  dirty_ = true;
+  lock.unlock();
+  Save();
+  return Issue().empty();
 }
 bool Service::Clear(const std::string& kind, const std::string& day) {
   std::unique_lock lock(mutex_);

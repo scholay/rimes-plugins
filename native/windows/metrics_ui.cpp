@@ -152,7 +152,7 @@ struct ExtensionPages::Impl {
   unsigned dpi = 96;
   ui::ThemeId theme = ui::ThemeId::kNight;
   ui::SettingsFonts fonts;
-  HFONT editor_font = nullptr;
+  HFONT editor_font = nullptr, composition_font = nullptr;
   HBRUSH background = nullptr, surface = nullptr;
   std::map<int, HWND> controls;
   std::map<int, ui::DipRect> positions;
@@ -242,6 +242,7 @@ struct ExtensionPages::Impl {
     if (IsWindow(hwnd)) DestroyWindow(hwnd);
     fonts.Release();
     if (editor_font) DeleteObject(editor_font);
+    if (composition_font) DeleteObject(composition_font);
     if (background) DeleteObject(background);
     if (surface) DeleteObject(surface);
   }
@@ -328,9 +329,13 @@ struct ExtensionPages::Impl {
     SendMessageW(editor, EM_SETTARGETDEVICE, 0, 1); // Explicit rows; no word-boundary rewrap.
     PARAFORMAT2 paragraph{}; paragraph.cbSize = sizeof(paragraph);
     paragraph.dwMask = PFM_LINESPACING | PFM_STARTINDENT | PFM_OFFSET | PFM_SPACEAFTER;
-    paragraph.dySpaceAfter = 0;
+    // Every display row is an explicit paragraph. Give the glyph line its
+    // natural 28-DIP height, then put the source/row gap after it. A single
+    // exact 76-DIP line adds leading above the glyph and shifts typed text
+    // onto the next source row in RichEdit.
+    paragraph.dySpaceAfter = 48 * 15;
     paragraph.dxStartIndent = indents.front() * 28 * 15;
-    paragraph.bLineSpacingRule = 4; paragraph.dyLineSpacing = 76 * 15;
+    paragraph.bLineSpacingRule = 4; paragraph.dyLineSpacing = 28 * 15;
     auto dc = GetDC(editor); auto old = SelectObject(dc, editor_font);
     const auto correctness = service->Practice().value("typedCorrectness", Json::array());
     LONG position = 0; std::size_t line_index = 0;
@@ -352,7 +357,8 @@ struct ExtensionPages::Impl {
       if (c == "\r" || c == "\n" || c == "\r\n") ++line_index;
       else {
         SIZE extent{}; GetTextExtentPoint32W(dc, text.data(), static_cast<int>(text.size()), &extent);
-        CHARFORMAT2W format{}; format.cbSize = sizeof(format); format.dwMask = CFM_SPACING | CFM_COLOR | CFM_BACKCOLOR;
+        CHARFORMAT2W format{}; format.cbSize = sizeof(format); format.dwMask = CFM_SPACING | CFM_COLOR | CFM_BACKCOLOR | CFM_FACE;
+        wcscpy_s(format.szFaceName, L"Microsoft YaHei"); format.bCharSet = DEFAULT_CHARSET;
         const bool incorrect = typed_index < correctness.size() && !correctness[typed_index].get<bool>();
         format.crTextColor = ui::ToColorRef(incorrect ? Palette().danger_text : Palette().text_primary);
         format.crBackColor = ui::ToColorRef(incorrect ? ui::Blend(Palette().surface, Palette().danger_text, .18f) : Palette().surface);
@@ -366,7 +372,7 @@ struct ExtensionPages::Impl {
     CHARRANGE tail{position, position};
     SendMessageW(editor, EM_EXSETSEL, 0, reinterpret_cast<LPARAM>(&tail));
     PARAFORMAT2 trailing{}; trailing.cbSize = sizeof(trailing); trailing.dwMask = PFM_SPACEAFTER;
-    trailing.dySpaceAfter = static_cast<LONG>(track_rows.size() > indents.size() ? track_rows.size() - indents.size() : 0) * 76 * 15;
+    trailing.dySpaceAfter = 48 * 15;
     SendMessageW(editor, EM_SETPARAFORMAT, 0, reinterpret_cast<LPARAM>(&trailing));
     CHARRANGE restored{physical(begin), physical(end)};
     SendMessageW(editor, EM_EXSETSEL, 0, reinterpret_cast<LPARAM>(&restored));
@@ -375,16 +381,7 @@ struct ExtensionPages::Impl {
       paragraph.dxStartIndent = indents[std::min(caret_row, indents.size() - 1)] * 28 * 15;
       paragraph.dwMask = PFM_LINESPACING | PFM_STARTINDENT | PFM_OFFSET;
       SendMessageW(editor, EM_SETPARAFORMAT, 0, reinterpret_cast<LPARAM>(&paragraph));
-      // Preedit is usually ASCII code; give its insertion attributes the same
-      // cell advance while leaving the IME free to own the marked range.
-      SIZE advance{}; auto insertion_dc = GetDC(editor); auto insertion_font = SelectObject(insertion_dc, editor_font);
-      GetTextExtentPoint32W(insertion_dc, L"n", 1, &advance);
-      SelectObject(insertion_dc, insertion_font); ReleaseDC(editor, insertion_dc);
-      CHARFORMAT2W insertion{}; insertion.cbSize = sizeof(insertion);
-      insertion.dwMask = CFM_SPACING | CFM_COLOR | CFM_BACKCOLOR;
-      insertion.sSpacing = static_cast<SHORT>(MulDiv(Px(28) - advance.cx, 1440, static_cast<int>(dpi)));
-      insertion.crTextColor = ui::ToColorRef(Palette().text_primary); insertion.crBackColor = ui::ToColorRef(Palette().surface);
-      SendMessageW(editor, EM_SETCHARFORMAT, SCF_SELECTION, reinterpret_cast<LPARAM>(&insertion));
+      InsertionStyle();
     }
     track_formatted = formatted; formatted_columns = track_columns; formatted_dpi = dpi; formatted_article = a.id;
     track_correctness = correctness;
@@ -392,6 +389,30 @@ struct ExtensionPages::Impl {
     SendMessageW(editor, WM_SETREDRAW, TRUE, 0);
     suppress = false; InvalidateRect(editor, nullptr, FALSE);
     RevealCaret();
+  }
+  void InsertionStyle(bool starting = false) {
+    if (!editor || !composition_font || (!starting && ComposingEditor())) return;
+    CHARRANGE selection{}; SendMessageW(editor, EM_EXGETSEL, 0, reinterpret_cast<LPARAM>(&selection));
+    if (selection.cpMin != selection.cpMax) return;
+    const auto was_suppressed = suppress; suppress = true;
+      // Preedit is usually ASCII code; give its insertion attributes the same
+      // cell advance while leaving the IME free to own the marked range.
+      SIZE advance{}; auto insertion_dc = GetDC(editor); auto insertion_font = SelectObject(insertion_dc, composition_font);
+      GetTextExtentPoint32W(insertion_dc, L"n", 1, &advance);
+      SelectObject(insertion_dc, insertion_font); ReleaseDC(editor, insertion_dc);
+      CHARFORMAT2W insertion{}; insertion.cbSize = sizeof(insertion);
+      insertion.dwMask = CFM_SPACING | CFM_COLOR | CFM_BACKCOLOR | CFM_FACE | CFM_CHARSET | CFM_LCID | CFM_SIZE;
+      wcscpy_s(insertion.szFaceName, L"Consolas"); insertion.bCharSet = ANSI_CHARSET;
+      insertion.bPitchAndFamily = FIXED_PITCH | FF_MODERN;
+      insertion.lcid = MAKELCID(MAKELANGID(LANG_ENGLISH, SUBLANG_ENGLISH_US), SORT_DEFAULT);
+      insertion.yHeight = 22 * 15;
+      insertion.sSpacing = static_cast<SHORT>(MulDiv(Px(28) - advance.cx, 1440, static_cast<int>(dpi)));
+      insertion.crTextColor = ui::ToColorRef(Palette().text_primary); insertion.crBackColor = ui::ToColorRef(Palette().surface);
+      // RichEdit keeps separate script fonts. Bind ASCII explicitly so a CJK
+      // caret does not substitute its proportional Chinese font for preedit.
+      SendMessageW(editor, EM_SETCHARFORMAT, SCF_ASSOCIATEFONT | SCF_CHARREPFROMLCID | SCF_NOKBUPDATE, reinterpret_cast<LPARAM>(&insertion));
+      SendMessageW(editor, EM_SETCHARFORMAT, SCF_SELECTION | SCF_NOKBUPDATE, reinterpret_cast<LPARAM>(&insertion));
+    suppress = was_suppressed;
   }
   void RevealCaret() {
     if (!editor || !positions.contains(7004) || GetFocus() != editor) return;
@@ -426,7 +447,9 @@ struct ExtensionPages::Impl {
         SetTextColor(dc, ui::ToColorRef(state == 1 ? Palette().accent_text : state >= 2 ? Palette().danger_text : Palette().text_secondary));
         RECT cell{track_left + Px((source_row.indent + static_cast<int>(i)) * 28), y, track_left + Px((source_row.indent + static_cast<int>(i) + 1) * 28), y + Px(32)};
         if (state) ui::FillRectColor(dc, cell, ui::ToColorRef(ui::Blend(Palette().surface, state == 1 ? Palette().accent : Palette().danger_text, .14f)));
-        const auto text = Wide(chars[i]); DrawTextW(dc, text.c_str(), static_cast<int>(text.size()), &cell, DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
+        const auto text = Wide(chars[i]);
+        auto glyph = cell; glyph.left += Px(3);
+        DrawTextW(dc, text.c_str(), static_cast<int>(text.size()), &glyph, DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
       }
       if (grid_visible) {
         const auto columns = source_row.indent + static_cast<int>(source_row.length);
@@ -683,7 +706,11 @@ struct ExtensionPages::Impl {
     editor_font =
         CreateFontW(-Px(22), 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE,
                     DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
-                    CLEARTYPE_QUALITY, DEFAULT_PITCH, L"Segoe UI");
+                    CLEARTYPE_QUALITY, DEFAULT_PITCH, L"Microsoft YaHei");
+    if (composition_font) DeleteObject(composition_font);
+    composition_font = CreateFontW(-Px(22), 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE,
+                    DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
+                    CLEARTYPE_QUALITY, FIXED_PITCH, L"Consolas");
     for (auto [id, h] : controls)
       SendMessageW(h, WM_SETFONT,
                    reinterpret_cast<WPARAM>(
@@ -724,7 +751,8 @@ struct ExtensionPages::Impl {
       // the selected title is the heading and selection lives in the material column.
       if (sub) Put(7000, 0, 0, practice_w - 130, 300);
       if (!sub) {
-        Button(7001, L"开始跟打");
+        const auto practice = service->Practice();
+        Button(7001, service->Armed() ? L"重新开始" : practice.value("finished", false) ? L"同篇重练" : L"开始跟打");
         Button(7002, L"结束");
         Button(7005, L"随机");
         Button(7015, grid_visible ? L"隐藏格线" : L"显示格线");
@@ -741,6 +769,7 @@ struct ExtensionPages::Impl {
                  ES_MULTILINE | ES_WANTRETURN | ES_NOOLEDRAGDROP);
         if (!ComposingEditor()) {
           SendMessageW(editor, EM_SETEVENTMASK, 0, ENM_CHANGE | ENM_SELCHANGE);
+        SendMessageW(editor, EM_SETTYPOGRAPHYOPTIONS, TO_ADVANCEDTYPOGRAPHY, TO_ADVANCEDTYPOGRAPHY);
           SendMessageW(editor, EM_EXLIMITTEXT, 0, 16384);
           SendMessageW(editor, EM_SETUNDOLIMIT, 0, 0);
           SendMessageW(editor, EM_SETREADONLY, !service->Armed(), 0);
@@ -1380,7 +1409,11 @@ struct ExtensionPages::Impl {
         if (progress > 0) ui::FillRoundRect(dc, Rect({w - 174, status_y + 8, w - 174 + 80 * progress, status_y + 13}), Px(3), ui::ToColorRef(p.accent));
         Label(dc, Number(progress * 100, 0) + L"%  " + Duration(m.value("elapsed", 0.0)),
               {w - 88, status_y, w, status_y + 24}, fonts.family, p.text_secondary, DT_SINGLELINE | DT_RIGHT);
-        Box(dc, {0, track_top - 36, w, positions.at(7004).bottom + 8});
+        // Owner-draw children can request a synchronous parent frame while
+        // Build is replacing positions. The editor rectangle is not published
+        // yet in that frame; the completed layout invalidates it afterwards.
+        if (const auto track = positions.find(7004); track != positions.end())
+          Box(dc, {0, track_top - 36, w, track->second.bottom + 8});
         Label(dc, L"原文在上 · 输入在下 · 组字不判分", {12, track_top - 27, w - 100, track_top - 6}, fonts.family, p.text_muted, DT_SINGLELINE | DT_END_ELLIPSIS);
       } else {
         const auto count = results.size();
@@ -1850,6 +1883,7 @@ struct ExtensionPages::Impl {
       return 0;
     }
     if (msg == WM_KEYDOWN || msg == WM_SYSKEYDOWN) {
+      self->InsertionStyle();
       unsigned mods = 0;
       if (GetKeyState(VK_CONTROL) & 0x8000)
         mods |= static_cast<unsigned>(core::KeyModifiers::kControl);
@@ -1862,7 +1896,7 @@ struct ExtensionPages::Impl {
           static_cast<DWORD>(GetMessageTime()), self->ComposingEditor());
       self->Refresh();
     }
-    if (msg == WM_IME_STARTCOMPOSITION) { self->ime_composing = true; self->service->Composition(); }
+    if (msg == WM_IME_STARTCOMPOSITION) { self->InsertionStyle(); self->ime_composing = true; self->service->Composition(); }
     if (msg == WM_KILLFOCUS && self->service->Armed()) {
       self->service->Mark("focusLost");
       PostMessageW(self->hwnd, WM_APP + 74, self->practice_generation, 0);
@@ -1874,6 +1908,10 @@ struct ExtensionPages::Impl {
       if (replaced.cpMin < replaced.cpMax) before = Text(h);
     }
     const auto result = DefSubclassProc(h, msg, w, l);
+    // RichEdit initializes the composition's insertion format in its START
+    // handler. Configure the empty insertion point afterwards, before the
+    // first marked-text update; subsequent composition edits stay untouched.
+    if (msg == WM_IME_STARTCOMPOSITION) self->InsertionStyle(true);
     if (msg == WM_IME_ENDCOMPOSITION) self->ime_composing = false;
     // RichEdit can replace a selection with identical text. A plain text
     // diff cannot see this real attempt/correction, so preserve its range.
@@ -1932,6 +1970,9 @@ struct ExtensionPages::Impl {
         return 0;
       case WM_NOTIFY: {
         auto* n = reinterpret_cast<NMHDR*>(l);
+        if (n->hwndFrom == self->editor && n->code == EN_SELCHANGE && !self->suppress) {
+          self->RevealCaret(); self->InsertionStyle();
+        }
         if (n->idFrom == 7104 && n->code == DTN_DATETIMECHANGE) {
           auto* d = reinterpret_cast<NMDATETIMECHANGE*>(l);
           if (d->dwFlags == GDT_VALID) {

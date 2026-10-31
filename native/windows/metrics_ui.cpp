@@ -441,11 +441,12 @@ struct ExtensionPages::Impl {
       }
     }
     // Native caret/marked text retain TSF ownership; highlight the next committed cell.
-    const auto count = service->Practice().value("metrics", Json::object()).value("committed", 0);
+    const auto count = static_cast<std::size_t>(last_practice.is_object()
+        ? std::max(0, last_practice.value("metrics", Json::object()).value("committed", 0)) : 0);
     for (std::size_t row = 0; row < track_rows.size(); ++row) {
       const auto& r = track_rows[row];
       if (count < r.start || count >= r.start + r.length) continue;
-      const auto column = r.indent + count - static_cast<int>(r.start);
+      const auto column = r.indent + static_cast<int>(count - r.start);
       RECT cell{track_left + Px(column * 28 + 1), Px(43 + static_cast<int>(row) * 76) - scroll_pos.y,
                 track_left + Px((column + 1) * 28 - 1), Px(69 + static_cast<int>(row) * 76) - scroll_pos.y};
       auto accent = CreateSolidBrush(ui::ToColorRef(Palette().accent)); FrameRect(dc, &cell, accent); DeleteObject(accent);
@@ -535,11 +536,11 @@ struct ExtensionPages::Impl {
       if (n >= 0) { SendMessageW(list, LB_SETITEMDATA, n, static_cast<LPARAM>(i));
         if (i == static_cast<std::size_t>(article)) SendMessageW(list, LB_SETCURSEL, n, 0); }
     }
-    const float list_top = books_tab && !selected_book.empty() ? 116 : 80;
+    const float list_top = books_tab && !selected_book.empty() ? 116.0f : 80.0f;
     if (list_top > 80) { Button(7017, L"‹ 返回书架"); Put(7017, x, 80, 224, 28); }
-    Put(7014, x, list_top, 224, std::max(40.0f, height - list_top - 84));
-    Put(7007, x, height - 74.0f, 224, 28);
-    if (books_tab && !selected_book.empty()) Put(7008, x, height - 38.0f, 224, 28);
+    Put(7014, x, list_top, 224, std::max(40.0f, static_cast<float>(height) - list_top - 84));
+    Put(7007, x, static_cast<float>(height) - 74.0f, 224, 28);
+    if (books_tab && !selected_book.empty()) Put(7008, x, static_cast<float>(height) - 38.0f, 224, 28);
     EnableWindow(controls[7007], !material_task && !service->Armed());
     EnableWindow(controls[7008], !material_task && !service->Armed() && !selected_book.empty());
   }
@@ -1337,7 +1338,6 @@ struct ExtensionPages::Impl {
         const auto snapshot = service->Practice();
         const auto m = snapshot.value("metrics", Json::object());
         const bool english = a.language == "english";
-        const auto w = practice_width;
         const auto heading_right = std::max(90.0f, w - (materials_visible ? 278 : 382));
         Label(dc, Wide(a.title), {0, 0, heading_right, 25}, fonts.title,
               p.text_primary, DT_SINGLELINE | DT_END_ELLIPSIS | DT_NOPREFIX);
@@ -1641,7 +1641,7 @@ struct ExtensionPages::Impl {
       for (std::size_t i = 0; i < articles.size(); ++i) {
         const bool in_pool = current_book.empty() ? articles[i].id.rfind("epub.", 0) != 0
             : articles[i].id.rfind("epub." + current_book + ".", 0) == 0;
-        if (in_pool && i != article) choices.push_back(static_cast<int>(i));
+        if (in_pool && i != static_cast<std::size_t>(article)) choices.push_back(static_cast<int>(i));
       }
       if (!choices.empty()) article = choices[std::random_device{}() % choices.size()];
       RememberView();

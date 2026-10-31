@@ -627,23 +627,7 @@ struct ExtensionPages::Impl {
                                         UINT_PTR id, DWORD_PTR ref) {
     auto* self = reinterpret_cast<Impl*>(ref);
     if (msg == WM_NCDESTROY) RemoveWindowSubclass(h, ScrollbarProc, id);
-    if (msg == WM_ERASEBKGND) return 1;
-    if (msg == WM_PAINT || msg == WM_PRINTCLIENT || msg == WM_PRINT) {
-      PAINTSTRUCT paint{};
-      auto dc = msg == WM_PAINT ? BeginPaint(h, &paint) : reinterpret_cast<HDC>(w);
-      RECT r{}; GetClientRect(h, &r);
-      ui::PaintSettingsScrollbar(h, dc, self->Palette(), self->dpi);
-      if (msg == WM_PAINT) EndPaint(h, &paint);
-      return 0;
-    }
-    if (msg == WM_MOUSEMOVE) {
-      TRACKMOUSEEVENT track{sizeof(track), TME_LEAVE, h, 0};
-      TrackMouseEvent(&track);
-    }
-    const auto result = DefSubclassProc(h, msg, w, l);
-    if (msg == WM_MOUSEMOVE || msg == WM_MOUSELEAVE || msg == WM_LBUTTONUP || msg == WM_ENABLE)
-      InvalidateRect(h, nullptr, FALSE);
-    return result;
+    return ui::SettingsScrollbarProcedure(h, msg, w, l, self->Palette(), self->dpi);
   }
   void Reveal(HWND control) {
     const int id = GetDlgCtrlID(control);
